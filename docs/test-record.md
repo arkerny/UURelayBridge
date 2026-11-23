@@ -17,7 +17,7 @@ WebView2 157.0.4341.60　**日期**：2026-11-23
 | 依赖 | crates.io 直连 | ✅ 436 个 crate |
 | 图标 | `python tools/gen_icons.py` | ✅ `icon.ico`（16–256 多尺寸）、`icon.icns`（PNG 载荷）、托盘 on/off、macOS 模板图 |
 
-产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.1.0_x64-setup.exe`、`dist/RelayBridge_1.1.0_x64_en-US.msi`。
+产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.2.0_x64-setup.exe`、`dist/RelayBridge_1.2.0_x64_en-US.msi`。
 
 ## 2. 自动化测试
 
@@ -100,8 +100,8 @@ debug 与 release 两个产物都跑过，输出一致：
 
 | 产物 | 路径 | 说明 |
 |---|---|---|
-| NSIS | `dist/RelayBridge_1.1.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
-| MSI | `dist/RelayBridge_1.1.0_x64_en-US.msi` | 同上 |
+| NSIS | `dist/RelayBridge_1.2.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
+| MSI | `dist/RelayBridge_1.2.0_x64_en-US.msi` | 同上 |
 | 免安装 | `dist/RelayBridge.exe` | 双击即用 |
 
 卸载不删除 `%APPDATA%\RelayBridge`（用户数据与生成结果保留）。

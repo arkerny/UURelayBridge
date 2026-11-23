@@ -1,4 +1,4 @@
-# RelayBridge v1.1
+# RelayBridge v1.2
 
 轻量级 **Clash Verge Rev 扩展配置生成器**。常驻托盘 / 菜单栏，把你定义的域名 / IP 规则生成一段
 `main(config)` 扩展脚本，由你手动粘贴进 Clash Verge Rev。
@@ -82,8 +82,8 @@ cargo build --release
 # 出安装包（NSIS + MSI，用户级安装）
 npm install -D @tauri-apps/cli@^2
 npx tauri build
-# 产物：target\release\bundle\nsis\RelayBridge_1.1.0_x64-setup.exe
-#       target\release\bundle\msi\RelayBridge_1.1.0_x64_en-US.msi
+# 产物：target\release\bundle\nsis\RelayBridge_1.2.0_x64-setup.exe
+#       target\release\bundle\msi\RelayBridge_1.2.0_x64_en-US.msi
 ```
 
 macOS 见 [docs/build-macos.md](docs/build-macos.md)（`.app` 必须在 Mac 上编译、签名、公证）。
