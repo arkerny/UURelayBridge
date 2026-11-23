@@ -1,0 +1,13 @@
+[package]
+name = "relaybridge-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "RelayBridge 核心：规则模型、校验、适配器、导出（与平台 / GUI 无关）"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+thiserror = "2"

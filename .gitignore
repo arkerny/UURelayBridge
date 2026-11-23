@@ -1,0 +1,28 @@
+# Rust / Tauri 构建产物（workspace 根和 src-tauri 下都可能有）
+**/target/
+/target/
+**/*.rs.bk
+
+# 前端依赖（仅在打包安装包时临时安装）
+node_modules/
+package.json
+package-lock.json
+
+# tauri-build 生成物
+src-tauri/gen/
+
+# 本机构建辅助缓存
+.cachemirror/
+.cargo-home/
+
+# 已构建好的分发产物（体积大，用构建命令重新生成）
+/dist/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 运行时日志
+*.log

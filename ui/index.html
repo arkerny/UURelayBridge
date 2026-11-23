@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RelayBridge</title>
+    <script src="theme-boot.js"></script>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo" aria-hidden="true"></span>
+          <div class="brand-text">
+            <strong>RelayBridge</strong>
+            <span class="muted" id="appMeta">加载中…</span>
+          </div>
+        </div>
+
+        <div class="top-actions">
+          <div class="state-pill" id="statePill">
+            <span class="dot"></span>
+            <span id="stateText">OFF</span>
+          </div>
+          <label class="switch" title="切换 RelayBridge 规则注入">
+            <input type="checkbox" id="toggleEnabled" />
+            <span class="slider"></span>
+          </label>
+          <button class="btn" id="btnRegen">重新生成</button>
+          <button class="btn ghost" id="btnOpenOut">打开输出目录</button>
+        </div>
+      </header>
+
+      <div class="subtle-banner" id="consistencyBanner" hidden></div>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="overview">概览</button>
+        <button class="tab" data-tab="rules">规则</button>
+        <button class="tab" data-tab="settings">设置</button>
+        <div class="tabs-spacer"></div>
+        <span class="muted small" id="ruleCounter"></span>
+      </nav>
+
+      <main class="content">
+        <!-- 概览 -->
+        <section class="page active" id="page-overview">
+          <div class="cards">
+            <div class="card">
+              <div class="card-label">RelayBridge 状态</div>
+              <div class="card-value" id="ovState">—</div>
+              <div class="card-hint" id="ovStateHint">只控制生成的脚本内容，不代表 Clash 已生效</div>
+            </div>
+            <div class="card">
+              <div class="card-label">目标内核</div>
+              <div class="card-value" id="ovTarget">—</div>
+              <div class="card-hint" id="ovTargetHint"></div>
+            </div>
+            <div class="card">
+              <div class="card-label">最近生成</div>
+              <div class="card-value" id="ovLast">从未生成</div>
+              <div class="card-hint" id="ovLastHint"></div>
+            </div>
+            <div class="card">
+              <div class="card-label">输出文件</div>
+              <div class="card-value mono small" id="ovScript">—</div>
+              <div class="card-hint" id="ovSha"></div>
+            </div>
+          </div>
+
+          <div class="split">
+            <div class="pane">
+              <div class="pane-head">
+                <h2>生成内容预览</h2>
+                <div class="pane-actions">
+                  <button class="btn tiny ghost" id="btnCopy">复制</button>
+                  <button class="btn tiny ghost" id="btnRefreshPreview">刷新</button>
+                </div>
+              </div>
+              <pre class="code" id="previewBox">加载中…</pre>
+            </div>
+
+            <div class="pane side">
+              <div class="pane-head"><h2>接入方式（手动）</h2></div>
+              <ol class="steps">
+                <li>点上面的开关切到 <b>ON</b>，RelayBridge 生成 <code>relaybridge.js</code>。</li>
+                <li>打开 Clash Verge Rev → 订阅 → 选中配置 → 右键「编辑扩展脚本」。</li>
+                <li>把生成的文件内容整段粘贴进去并保存，然后重载配置。</li>
+              </ol>
+              <p class="note">
+                本程序不写入 Clash Verge 的任何文件、不导入、不改订阅、不调用 Controller API。
+                OFF 只会让脚本停止注入，已加载的规则需要你在 Clash Verge 里重新加载脚本才会消失。
+              </p>
+              <div class="kv">
+                <div><span class="muted">数据目录</span><code class="mono small" id="pData">—</code></div>
+                <div><span class="muted">备份目录</span><code class="mono small" id="pBackups">—</code></div>
+                <div><span class="muted">清单文件</span><code class="mono small" id="pManifest">—</code></div>
+              </div>
+              <div class="issues" id="issueBox" hidden></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 规则 -->
+        <section class="page" id="page-rules">
+          <div class="pane-head">
+            <h2>规则</h2>
+            <div class="pane-actions">
+              <button class="btn tiny ghost" id="btnJson">高级：编辑 JSON</button>
+              <button class="btn tiny ghost" id="btnDiscard" hidden>放弃修改</button>
+              <button class="btn" id="btnSaveRules" hidden>保存规则</button>
+              <button class="btn" id="btnAddRule">新建规则</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="rules">
+              <thead>
+                <tr>
+                  <th style="width:56px">启用</th>
+                  <th>名称</th>
+                  <th>匹配</th>
+                  <th style="width:190px">动作</th>
+                  <th style="width:110px"></th>
+                </tr>
+              </thead>
+              <tbody id="rulesBody"></tbody>
+            </table>
+            <div class="empty" id="rulesEmpty">还没有规则。点右上角「新建规则」。</div>
+          </div>
+          <div class="hintline">
+            规则按从上到下的顺序注入到用户配置的最前面（位于 MATCH 之前）；同名规则重复生成不会叠加。
+          </div>
+        </section>
+
+        <!-- 设置 -->
+        <section class="page" id="page-settings">
+          <div class="pane-head"><h2>设置</h2></div>
+          <div class="form-grid">
+            <label class="row">
+              <input type="checkbox" id="setStartMin" />
+              <span>启动时隐藏到托盘</span>
+            </label>
+            <label class="row">
+              <input type="checkbox" id="setCloseToTray" />
+              <span>关闭窗口时隐藏到托盘</span>
+            </label>
+            <label class="row">
+              <input type="checkbox" id="setNotify" />
+              <span>操作完成后显示提示</span>
+            </label>
+            <label class="row">
+              <span>主题</span>
+              <select id="setTheme">
+                <option value="system">跟随系统</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select>
+              <span class="muted small">切换后立即生效</span>
+            </label>
+            <label class="row">
+              <span>目标内核</span>
+              <select id="setTarget">
+                <option value="clash-verge-rev">Clash Verge Rev（扩展脚本）</option>
+                <option value="mihomo" disabled>Mihomo（规划中）</option>
+                <option value="sing-box" disabled>sing-box（规划中）</option>
+              </select>
+            </label>
+            <label class="row">
+              <span>保留历史备份</span>
+              <input type="number" id="setBackups" min="1" max="200" step="1" />
+              <span class="muted small">份</span>
+            </label>
+            <div class="row">
+              <span>数据目录</span>
+              <code class="mono small" id="setData">—</code>
+              <button class="btn tiny ghost" id="btnOpenData">打开</button>
+            </div>
+            <div class="row">
+              <span>输出目录</span>
+              <code class="mono small" id="setOut">—</code>
+              <button class="btn tiny ghost" id="btnOpenOut2">打开</button>
+            </div>
+            <div class="row">
+              <span>备份目录</span>
+              <code class="mono small" id="setBak">—</code>
+              <button class="btn tiny ghost" id="btnOpenBak">打开</button>
+            </div>
+          </div>
+          <div class="pane-actions end">
+            <button class="btn" id="btnSaveSettings">保存设置</button>
+          </div>
+          <div class="hintline">
+            RelayBridge 不使用管理员权限、不写注册表、不修改系统代理、不装服务。
+          </div>
+        </section>
+      </main>
+
+      <section class="logbar">
+        <div class="logbar-head">
+          <div class="logbar-title">
+            <span class="dot live"></span> 实时日志
+            <span class="muted small" id="logCount">0</span>
+          </div>
+          <div class="logbar-actions">
+            <label class="muted small chk"><input type="checkbox" id="logAutoScroll" checked /> 自动滚动</label>
+            <button class="btn tiny ghost" id="btnClearLog">清空</button>
+          </div>
+        </div>
+        <div class="log" id="logBox"></div>
+      </section>
+    </div>
+
+    <!-- 确认对话框 -->
+    <div class="modal" id="modal" hidden>
+      <div class="modal-card">
+        <h3 id="modalTitle">确认</h3>
+        <div id="modalBody" class="modal-body"></div>
+        <div class="modal-actions">
+          <button class="btn ghost" id="modalCancel">取消</button>
+          <button class="btn" id="modalOk">确认</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 规则编辑 -->
+    <div class="modal" id="ruleModal" hidden>
+      <div class="modal-card wide">
+        <h3 id="ruleTitle">新建规则</h3>
+        <div class="modal-body form">
+          <label class="field">
+            <span>名称</span>
+            <input id="fName" type="text" placeholder="例如：UU 远程控制面" />
+          </label>
+          <label class="field">
+            <span>匹配域名（每行一个，支持 <code>*.example.com</code>）</span>
+            <textarea id="fDomains" rows="4" placeholder="nrd.nie.163.com&#10;*.nrd.nie.163.com"></textarea>
+          </label>
+          <label class="field">
+            <span>匹配 IP / CIDR（每行一个）</span>
+            <textarea id="fCidrs" rows="2" placeholder="10.0.0.0/8"></textarea>
+          </label>
+          <label class="field">
+            <span>动作</span>
+            <select id="fAction">
+              <option value="proxy">代理到指定策略组</option>
+              <option value="direct">直连（DIRECT）</option>
+              <option value="reject">拒绝（REJECT）</option>
+            </select>
+          </label>
+          <label class="field" id="fGroupWrap">
+            <span>策略组名称（必须已存在于你的 Clash 配置里）</span>
+            <input id="fGroup" type="text" placeholder="例如：🔰 节点选择" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="btn ghost" id="ruleCancel">取消</button>
+          <button class="btn" id="ruleOk">保存并生成</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- JSON 高级编辑 -->
+    <div class="modal" id="jsonModal" hidden>
+      <div class="modal-card wide">
+        <h3>高级：编辑 project.json</h3>
+        <div class="modal-body">
+          <p class="note">保存前会做 JSON 语法与字段校验；校验失败不会写任何文件。</p>
+          <textarea id="jsonText" class="code-input" spellcheck="false"></textarea>
+          <div class="issues" id="jsonIssues" hidden></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn ghost" id="jsonCancel">取消</button>
+          <button class="btn" id="jsonOk">校验并保存</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" hidden></div>
+    <script src="app.js"></script>
+  </body>
+</html>
