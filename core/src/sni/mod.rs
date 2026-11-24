@@ -4,5 +4,6 @@
 //! 真正的本地转发服务在 app crate 的 `hostmode` 里。
 
 pub mod dns;
+pub mod doh;
 pub mod hosts;
 pub mod tls;

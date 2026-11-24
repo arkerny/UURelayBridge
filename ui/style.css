@@ -518,3 +518,35 @@ textarea.code-input:focus { border-color: var(--accent-dim); }
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--thumb-hover); background-clip: content-box; }
 ::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---------- 模式选单 ---------- */
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+.mode-btn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 5px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+  transition: background .15s, color .15s;
+}
+.mode-btn:hover { color: var(--text); }
+.mode-btn.active {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.row-group { display: flex; gap: 10px; flex-wrap: wrap; }
+.row-group .row { flex: 1 1 140px; }
+.row-group .row.narrow { flex: 0 0 120px; }
+.tab[hidden] { display: none; }

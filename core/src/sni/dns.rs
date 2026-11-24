@@ -52,6 +52,52 @@ pub fn resolve_one(host: &str, server: &str) -> Result<IpAddr, String> {
         .map_err(|e| e)
 }
 
+/// 按 server 的形态选协议：`http(s)://...` 走 DoH，其它按 `IP[:端口]` 走明文 UDP。
+pub fn resolve_any(host: &str, server: &str) -> Result<IpAddr, String> {
+    let s = server.trim();
+    if s.starts_with("http://") || s.starts_with("https://") {
+        return resolve_doh(host, s);
+    }
+    resolve_one(host, s)
+}
+
+pub fn is_doh(server: &str) -> bool {
+    let s = server.trim();
+    s.starts_with("http://") || s.starts_with("https://")
+}
+
+fn resolve_doh(host: &str, url: &str) -> Result<IpAddr, String> {
+    let key = format!("doh|{}|{}", host, url);
+    if let Ok(g) = cache().lock() {
+        if let Some(e) = g.get(&key) {
+            if e.expires > Instant::now() {
+                return Ok(IpAddr::V4(e.addrs[0]));
+            }
+        }
+    }
+
+    let id = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0) & 0xFFFF) as u16;
+    let query = build_query(host, id);
+    let resp = crate::sni::doh::query(url, &query, 6000)?;
+    let addrs = parse_response(&resp, id).ok_or_else(|| "DoH 响应无法解析".to_string())?;
+    if addrs.is_empty() {
+        return Err(format!("DoH 没有返回 A 记录：{host}"));
+    }
+    if let Ok(mut g) = cache().lock() {
+        g.insert(
+            key,
+            Entry {
+                addrs: addrs.clone(),
+                expires: Instant::now() + Duration::from_secs(60),
+            },
+        );
+    }
+    Ok(IpAddr::V4(addrs[0]))
+}
+
 fn build_query(host: &str, id: u16) -> Vec<u8> {
     let mut q = Vec::with_capacity(512);
     q.extend_from_slice(&id.to_be_bytes());

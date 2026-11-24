@@ -181,6 +181,14 @@
     renderRules();
     renderSettings();
     renderDirtyState();
+    const mode = currentMode();
+    document.querySelectorAll(".mode-btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+    $("enabledSwitch").hidden = mode === "host";
+    $("btnCopyTop").hidden = mode === "host";
+    document.querySelectorAll(".tab").forEach((t) => {
+      const forMode = t.dataset.for || "both";
+      t.hidden = forMode !== "both" && forMode !== mode;
+    });
     $("previewBox").textContent = S.snap.preview || "（没有可生成的规则）";
     renderIssues(S.snap.validation);
   }
@@ -192,7 +200,6 @@
     pill.className = "state-pill" + (failed ? " err" : s.enabled ? " on" : "");
     $("stateText").textContent = failed ? "生成失败" : s.enabled ? "ON" : "OFF";
     $("toggleEnabled").checked = !!s.enabled;
-    $("appMeta").textContent = `v${S.snap.app_version} · ${S.snap.platform}`;
   }
 
   function renderCards() {
@@ -224,8 +231,7 @@
   function renderPaths() {
     const p = S.snap.paths;
     $("pData").textContent = p.data_dir;
-    $("pBackups").textContent = p.backups_dir;
-    $("pManifest").textContent = p.manifest;
+    $("pScript").textContent = p.script;
     $("setData").textContent = p.data_dir;
     $("setOut").textContent = p.output_dir;
     $("setBak").textContent = p.backups_dir;
@@ -557,21 +563,14 @@
       await toggleEnabled(want);
     });
 
-    $("btnRegen").addEventListener("click", () => guard(exportScript));
-    $("btnOpenOut").addEventListener("click", () => guard(() => api("open_output_dir")));
+    $("btnExport").addEventListener("click", () => guard(exportScript));
     $("btnOpenOut2").addEventListener("click", () => guard(() => api("open_output_dir")));
+    $("btnOpenOut").addEventListener("click", () => guard(() => api("open_output_dir")));
     $("btnOpenData").addEventListener("click", () => guard(() => api("open_data_dir")));
     $("btnOpenBak").addEventListener("click", () => guard(() => api("open_backups_dir")));
 
-    $("btnCopy").addEventListener("click", async () => {
-      const text = $("previewBox").textContent || "";
-      try {
-        await navigator.clipboard.writeText(text);
-        toast("已复制到剪贴板");
-      } catch {
-        toast("复制失败，可手动选中文本", "warn");
-      }
-    });
+    $("btnCopy").addEventListener("click", () => copyScript());
+    $("btnCopyTop").addEventListener("click", () => copyScript());
 
     $("btnRefreshPreview").addEventListener("click", () => guard(refreshPreview));
     $("btnAddRule").addEventListener("click", () => openRuleModal(null));
@@ -818,6 +817,35 @@
         /* 忽略轮询错误 */
       }
     }, 1500);
+  }
+
+  function currentMode() {
+    return S.snap && S.snap.settings.mode === "host" ? "host" : "clash";
+  }
+
+  function applyMode() {
+    const mode = currentMode();
+    document.querySelectorAll(".mode-btn").forEach((b) => b.classList.toggle("active", b.dataset.mode === mode));
+    document.querySelectorAll(".tab").forEach((t) => {
+      const forMode = t.dataset.for || "both";
+      t.hidden = forMode !== "both" && forMode !== mode;
+    });
+    switchTab(mode === "host" ? "host" : "overview");
+    if (mode === "host" && hasBackend()) {
+      guard(loadHost);
+      pollHost();
+    }
+  }
+
+  async function copyScript() {
+    const text = ($("previewBox").textContent || "").trim();
+    if (!text) { toast("还没有可复制的内容", "warn"); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("已复制，粘贴进 Clash Verge 的扩展脚本即可");
+    } catch {
+      toast("复制失败，可手动选中文本", "warn");
+    }
   }
 
   function switchTab(name) {

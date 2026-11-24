@@ -12,33 +12,31 @@
       <header class="topbar">
         <div class="brand">
           <span class="logo" aria-hidden="true"></span>
-          <div class="brand-text">
-            <strong>UURelayBridge</strong>
-            <span class="muted" id="appMeta">加载中…</span>
-          </div>
+          <strong>UURelayBridge</strong>
+        </div>
+
+        <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="使用方式">
+          <button class="mode-btn" data-mode="clash">Clash 规则</button>
+          <button class="mode-btn" data-mode="host">本机转发</button>
         </div>
 
         <div class="top-actions">
-          <div class="state-pill" id="statePill">
-            <span class="dot"></span>
-            <span id="stateText">OFF</span>
-          </div>
-          <label class="switch" title="切换 RelayBridge 规则注入">
+          <span class="state-pill" id="statePill"><span class="dot"></span><span id="stateText">OFF</span></span>
+          <label class="switch" id="enabledSwitch" title="规则注入开关">
             <input type="checkbox" id="toggleEnabled" />
             <span class="slider"></span>
           </label>
-          <button class="btn" id="btnRegen">导出到文件</button>
-          <button class="btn ghost" id="btnOpenOut">打开输出目录</button>
+          <button class="btn" id="btnCopyTop">复制脚本</button>
         </div>
       </header>
 
       <div class="subtle-banner" id="consistencyBanner" hidden></div>
 
       <nav class="tabs">
-        <button class="tab active" data-tab="overview">概览</button>
-        <button class="tab" data-tab="rules">规则</button>
-        <button class="tab" data-tab="host">Host 模式</button>
-        <button class="tab" data-tab="settings">设置</button>
+        <button class="tab active" data-tab="overview" data-for="clash">概览</button>
+        <button class="tab" data-tab="rules" data-for="clash">规则</button>
+        <button class="tab" data-tab="host" data-for="host">本机转发</button>
+        <button class="tab" data-tab="settings" data-for="both">设置</button>
         <div class="tabs-spacer"></div>
         <span class="muted small" id="ruleCounter"></span>
       </nav>
@@ -82,20 +80,17 @@
             </div>
 
             <div class="pane side">
-              <div class="pane-head"><h2>接入方式（手动）</h2></div>
-              <ol class="steps">
-                <li>点上面的开关切到 <b>ON</b>，RelayBridge 生成 <code>relaybridge.js</code>。</li>
-                <li>打开 Clash Verge Rev → 订阅 → 选中配置 → 右键「编辑扩展脚本」。</li>
-                <li>把生成的文件内容整段粘贴进去并保存，然后重载配置。</li>
-              </ol>
+              <div class="pane-head"><h2>怎么用</h2></div>
               <p class="note">
-                本程序不写入 Clash Verge 的任何文件、不导入、不改订阅、不调用 Controller API。
-                OFF 只会让脚本停止注入，已加载的规则需要你在 Clash Verge 里重新加载脚本才会消失。
+                复制上面的内容 → Clash Verge Rev →「订阅」→ 右键配置 →「编辑扩展脚本」→ 粘贴保存 → 重载。
               </p>
               <div class="kv">
+                <div><span class="muted">导出位置</span><code class="mono small" id="pScript">—</code></div>
                 <div><span class="muted">数据目录</span><code class="mono small" id="pData">—</code></div>
-                <div><span class="muted">备份目录</span><code class="mono small" id="pBackups">—</code></div>
-                <div><span class="muted">清单文件</span><code class="mono small" id="pManifest">—</code></div>
+              </div>
+              <div class="pane-actions end">
+                <button class="btn tiny ghost" id="btnExport">导出到文件</button>
+                <button class="btn tiny ghost" id="btnOpenOut">打开目录</button>
               </div>
               <div class="issues" id="issueBox" hidden></div>
             </div>
@@ -133,13 +128,13 @@
           </div>
         </section>
 
-        <!-- Host 模式 -->
+        <!-- 本机转发 -->
         <section class="page" id="page-host">
           <div class="pane-head">
-            <h2>Host 模式：本地 TLS 分片转发</h2>
+            <h2>本机转发</h2>
             <div class="pane-actions">
               <span class="state-pill" id="hostStatePill"><span class="dot"></span><span id="hostStateText">未启动</span></span>
-              <button class="btn" id="btnHostStart">启动转发</button>
+              <button class="btn" id="btnHostStart">启动</button>
               <button class="btn ghost" id="btnHostStop">停止</button>
             </div>
           </div>
@@ -148,61 +143,61 @@
             <div class="pane">
               <div class="form-grid">
                 <label class="row">
-                  <span>监听端口</span>
-                  <input id="hostPort" type="number" min="1" max="65535" />
-                  <span class="muted small">HTTPS 需要 443（Windows 普通用户可绑；macOS 需 root）</span>
-                </label>
-                <label class="row">
-                  <span>分片方式</span>
-                  <select id="hostMode">
-                    <option value="record">TLS Record 分片（推荐）</option>
-                    <option value="segment">TCP 分段</option>
-                    <option value="off">只转发，不分片</option>
-                  </select>
-                </label>
-                <label class="row">
-                  <span>分片段数</span>
-                  <input id="hostParts" type="number" min="2" max="12" />
-                </label>
-                <label class="row">
-                  <span>DNS 服务器</span>
-                  <input id="hostDns" type="text" spellcheck="false" />
-                  <span class="muted small">用来查真实 IP（绕过被改写的 hosts）</span>
+                  <span>域名</span>
                 </label>
                 <label class="field">
-                  <span>走本机转发的域名（每行一个，后缀匹配，如 <code>nrd.nie.163.com</code>）</span>
-                  <textarea id="hostDomains" rows="5" placeholder="nrd.nie.163.com"></textarea>
+                  <textarea id="hostDomains" rows="4" placeholder="nrd.nie.163.com（每行一个，含子域）"></textarea>
+                </label>
+                <div class="row-group">
+                  <label class="row">
+                    <span>端口</span>
+                    <input id="hostPort" type="number" min="1" max="65535" />
+                  </label>
+                  <label class="row">
+                    <span>分片</span>
+                    <select id="hostMode">
+                      <option value="record">TLS Record</option>
+                      <option value="segment">TCP 分段</option>
+                      <option value="off">不分片</option>
+                    </select>
+                  </label>
+                  <label class="row narrow">
+                    <span>段数</span>
+                    <input id="hostParts" type="number" min="2" max="12" />
+                  </label>
+                </div>
+                <label class="row">
+                  <span>DNS</span>
+                  <input id="hostDns" type="text" spellcheck="false" list="dnsPresets"
+                         placeholder="223.5.5.5 或 https://dns.alidns.com/dns-query" />
+                  <datalist id="dnsPresets">
+                    <option value="https://dns.alidns.com/dns-query">AliDNS · DoH</option>
+                    <option value="https://doh.pub/dns-query">DNSPod · DoH</option>
+                    <option value="https://cloudflare-dns.com/dns-query">Cloudflare · DoH</option>
+                    <option value="https://dns.google/dns-query">Google · DoH</option>
+                    <option value="223.5.5.5">AliDNS · UDP</option>
+                  </datalist>
                 </label>
                 <label class="row">
                   <input type="checkbox" id="hostLinkClash" />
-                  <span>同一份域名也写进 Clash 脚本（<code>dns.hosts</code> + <code>DIRECT</code> 交给本机转发器）</span>
+                  <span>同时写进 Clash 脚本</span>
                 </label>
               </div>
               <div class="pane-actions end">
-                <button class="btn ghost" id="btnHostSave">保存配置</button>
-                <button class="btn ghost" id="btnHostApplyHosts">写入 Hosts（需管理员）</button>
+                <button class="btn ghost" id="btnHostSave">保存</button>
+                <button class="btn ghost" id="btnHostApplyHosts">写入 Hosts</button>
                 <button class="btn ghost danger" id="btnHostClearHosts">移除 Hosts</button>
               </div>
             </div>
 
             <div class="pane side">
-              <div class="pane-head"><h2>它怎么工作</h2></div>
-              <ol class="steps">
-                <li>本机监听 <code>127.0.0.1:端口</code>，只接受 TLS。</li>
-                <li>读 ClientHello，取出 SNI，用 DNS 查真实 IP（不会绕回 hosts 里的 127.0.0.1）。</li>
-                <li>按域名决定是否把这条记录拆成多段再转发，之后双向透传。</li>
-                <li>hosts 把域名指到 127.0.0.1，系统才把流量送进来 —— 这一步需要管理员。</li>
-              </ol>
+              <div class="pane-head"><h2>状态</h2></div>
               <div class="kv">
-                <div><span class="muted">hosts</span><code id="hostHostsState">—</code></div>
-                <div><span class="muted">连接 / 分片</span><code id="hostStats">—</code></div>
                 <div><span class="muted">监听</span><code id="hostListen">—</code></div>
+                <div><span class="muted">Hosts</span><code id="hostHostsState">—</code></div>
+                <div><span class="muted">连接</span><code id="hostStats">—</code></div>
               </div>
-              <p class="note">
-                ⚠ 写入 hosts 后，这些域名只有在「本程序运行且转发已启动」时才可用；
-                退出前请先「移除 Hosts」，或重新启动本程序再关闭。
-                本程序不会改系统代理、防火墙或 Clash 配置。
-              </p>
+              <p class="note">Hosts 只在本程序运行且转发开启时有效；不用时点「移除 Hosts」。</p>
             </div>
           </div>
         </section>

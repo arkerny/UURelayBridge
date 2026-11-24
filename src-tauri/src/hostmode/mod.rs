@@ -410,7 +410,7 @@ fn resolve_fast(host: &str, preferred: &str) -> Option<IpAddr> {
         let server = server.clone();
         let tx = tx.clone();
         std::thread::spawn(move || {
-            let r = dns::resolve_one(&host, &server);
+            let r = dns::resolve_any(&host, &server);
             let _ = tx.send(r);
         });
     }

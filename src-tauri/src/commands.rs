@@ -622,6 +622,40 @@ pub fn clear_logs(app: AppHandle, rt: State<'_, AppRuntime>) -> Snapshot {
 }
 
 #[tauri::command]
+pub fn set_mode(
+    mode: String,
+    app: AppHandle,
+    rt: State<'_, AppRuntime>,
+) -> Result<Snapshot, CommandError> {
+    let mut s = rt.settings();
+    let next = if uurelaybridge_core::settings::MODES.contains(&mode.as_str()) {
+        mode
+    } else {
+        "clash".to_string()
+    };
+    if s.mode != next {
+        s.mode = next.clone();
+        s.sanitize();
+        crate::state::settings::save_settings(&rt.paths.settings(), &s)
+            .map_err(|e| CommandError::new("io_error", format!("保存设置失败：{e}")))?;
+        if let Ok(mut g) = rt.settings.write() {
+            *g = s;
+        }
+        rt.log(
+            "info",
+            "ui",
+            format!(
+                "使用方式：{}",
+                if next == "host" { "本机转发" } else { "Clash 规则" }
+            ),
+        );
+        tray::refresh(&app);
+        emit_state(&app);
+    }
+    Ok(build_snapshot(&rt))
+}
+
+#[tauri::command]
 pub fn preview(project: Project, rt: State<'_, AppRuntime>) -> PreviewOut {
     let settings = rt.settings();
     let sni = sni_link(&rt);

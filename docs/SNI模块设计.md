@@ -21,6 +21,7 @@
 | TCP 分段（带间隔） | ✅ 已实现 + 单测 | 同上 |
 | 本地 TLS 转发（透明、不终止 TLS） | ✅ 已实现 + 端到端验证 | `src-tauri/src/hostmode/mod.rs` |
 | DNS A 查询（绕过 hosts）+ 并行取快 + 缓存 | ✅ 已实现 + 单测 | `core/src/sni/dns.rs` |
+| DNS over HTTPS（WinHTTP / curl），选 DoH 时不退化明文 | ✅ 已实现 + 本地假服务器联调 | `core/src/sni/doh.rs` |
 | hosts 改写（只动自己那一段、幂等、可移除） | ✅ 已实现 + 单测 | `core/src/sni/hosts.rs` |
 | 提权（Windows UAC / macOS osascript） | ✅ 已实现 | `src-tauri/src/hostmode/elevate.rs` |
 | 按域名选择性启用（不走分片就透传） | ✅ 已实现 | `hostmode` 的 `matches()` |

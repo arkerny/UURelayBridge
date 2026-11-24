@@ -20,6 +20,12 @@ fn d_backups() -> usize {
 fn d_theme() -> String {
     "system".to_string()
 }
+fn d_mode() -> String {
+    "clash".to_string()
+}
+
+/// 使用方式：clash = 生成规则脚本；host = 本机转发
+pub const MODES: [&str; 2] = ["clash", "host"];
 
 /// 允许的主题值：system（跟随系统）/ light / dark
 pub const THEME_MODES: [&str; 3] = ["system", "light", "dark"];
@@ -44,6 +50,9 @@ pub struct Settings {
     /// 界面主题：system / light / dark
     #[serde(default = "d_theme")]
     pub theme: String,
+    /// 使用方式：clash / host
+    #[serde(default = "d_mode")]
+    pub mode: String,
     #[serde(default)]
     pub last_generated_at: Option<String>,
     #[serde(default)]
@@ -66,6 +75,7 @@ impl Default for Settings {
             target: d_target(),
             backup_limit: d_backups(),
             theme: d_theme(),
+            mode: d_mode(),
             last_generated_at: None,
             last_generation_ok: None,
         }

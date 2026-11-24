@@ -48,9 +48,10 @@ pub fn atomic_write_bytes(path: &Path, contents: &[u8]) -> io::Result<()> {
 }
 
 /// 读取文本文件（不存在返回 Ok(None)）。
+/// 顺手去掉 UTF-8 BOM：用户可能用记事本之类保存过配置文件。
 pub fn read_optional(path: &Path) -> io::Result<Option<String>> {
     match fs::read_to_string(path) {
-        Ok(s) => Ok(Some(s)),
+        Ok(s) => Ok(Some(s.trim_start_matches('\u{feff}').to_string())),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
     }

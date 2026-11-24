@@ -267,6 +267,7 @@ const LAYOUT_PROBE_JS: &str = r#"
       };
     })(),
     hostPage: { fields: document.querySelectorAll('#page-host input, #page-host textarea, #page-host select').length },
+    ui: { bodyClass: document.body.className, mode: (document.querySelector(".mode-btn.active") || {}).dataset ? document.querySelector(".mode-btn.active").dataset.mode : null, visibleTabs: Array.prototype.filter.call(document.querySelectorAll(".tab"), function (t) { return !t.hidden; }).map(function (t) { return t.textContent; }) },
     preview: (function () {
       var t = (document.getElementById('previewBox') || {}).textContent || '';
       return { sni: t.indexOf('RB_SNI_DOMAINS') >= 0, hosts: t.indexOf('hosts[d]') >= 0, len: t.length };
@@ -298,6 +299,7 @@ pub fn run() {
             commands::host_open_help,
             commands::clear_logs,
             commands::preview,
+            commands::set_mode,
             commands::set_enabled,
             commands::regenerate,
             commands::save_project,
