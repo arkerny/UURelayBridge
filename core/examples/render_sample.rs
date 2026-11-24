@@ -46,6 +46,7 @@ fn main() {
             enabled: true,
             compiled: &compiled,
             generated_at: "2026-11-23T19:30:00+08:00",
+            sni: None,
         })
         .expect("render");
     print!("{script}");

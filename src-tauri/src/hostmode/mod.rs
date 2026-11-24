@@ -57,6 +57,9 @@ fn d_parts() -> u8 {
 fn d_dns() -> String {
     "223.5.5.5".to_string()
 }
+fn d_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostConfig {
@@ -74,6 +77,9 @@ pub struct HostConfig {
     pub fragment_parts: u8,
     #[serde(default = "d_dns")]
     pub dns_server: String,
+    /// 是否把同一份域名/参数同时写进 Clash 脚本（dns.hosts + DIRECT 交给本机转发器）
+    #[serde(default = "d_true")]
+    pub link_clash: bool,
 }
 
 impl Default for HostConfig {
@@ -85,6 +91,7 @@ impl Default for HostConfig {
             fragment_mode: d_mode(),
             fragment_parts: d_parts(),
             dns_server: d_dns(),
+            link_clash: true,
         }
     }
 }

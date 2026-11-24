@@ -73,6 +73,7 @@ fn render(project: &Project, enabled: bool) -> String {
             enabled,
             compiled: &compiled,
             generated_at: "2026-01-01T00:00:00+08:00",
+            sni: None,
         })
         .unwrap()
 }
@@ -225,5 +226,105 @@ fn empty_rules_project_still_produces_working_script() {
     let Some(out) = run_node(&script, &user_config(), 1) else {
         return;
     };
-    assert_eq!(rules_of(&out).len(), 3, "没有规则时不应改动 rules");
+    assert_eq!(rules_of(&out).len(), 3, "没有规则时不应改动 rules");}
+
+// ---------------------------------------------------------------- SNI 联动
+
+fn render_with_sni(project: &Project, enabled: bool, domains: &[&str]) -> String {
+    let compiled = compiler::compile(project);
+    let sni = uurelaybridge_core::adapters::SniLink {
+        enabled: true,
+        domains: domains.iter().map(|d| d.to_string()).collect(),
+        mode: "record".to_string(),
+        parts: 4,
+    };
+    ClashVergeRev
+        .render(&RenderInput {
+            app_version: "1.3.0",
+            project_name: &project.name,
+            enabled,
+            compiled: &compiled,
+            generated_at: "2026-01-01T00:00:00+08:00",
+            sni: Some(&sni),
+        })
+        .unwrap()
+}
+
+fn dns_config() -> String {
+    serde_json::json!({
+        "dns": { "enable": true, "hosts": { "keep.example.com": "1.2.3.4" } },
+        "proxy-groups": [{"name": "Proxy", "type": "select", "proxies": ["DIRECT"]}],
+        "rules": ["MATCH,Proxy"]
+    })
+    .to_string()
+}
+
+#[test]
+fn sni_link_points_domains_to_localhost_and_adds_direct_rule() {
+    let script = render_with_sni(&sample_project(true), true, &["nrd.nie.163.com"]);
+    let Some(out) = run_node(&script, &dns_config(), 1) else {
+        return;
+    };
+    assert_eq!(out["dns"]["hosts"]["nrd.nie.163.com"], "127.0.0.1");
+    assert_eq!(out["dns"]["hosts"]["keep.example.com"], "1.2.3.4", "用户原有 hosts 必须保留");
+    let rules = rules_of(&out);
+    assert_eq!(rules[0], "DOMAIN-SUFFIX,nrd.nie.163.com,DIRECT", "SNI 规则要在最前面");
+    assert_eq!(rules[rules.len() - 1], "MATCH,Proxy");
+}
+
+#[test]
+fn sni_link_is_idempotent() {
+    let script = render_with_sni(&sample_project(true), true, &["nrd.nie.163.com"]);
+    let Some(out) = run_node(&script, &dns_config(), 3) else {
+        return;
+    };
+    let rules = rules_of(&out);
+    assert_eq!(
+        rules
+            .iter()
+            .filter(|r| r.as_str() == "DOMAIN-SUFFIX,nrd.nie.163.com,DIRECT")
+            .count(),
+        1,
+        "重复加载不应叠加：{:?}",
+        rules
+    );
+}
+
+#[test]
+fn off_removes_sni_hosts_entry() {
+    let on = render_with_sni(&sample_project(true), true, &["nrd.nie.163.com"]);
+    let off = render_with_sni(&sample_project(true), false, &["nrd.nie.163.com"]);
+    let dir = tmpdir("sni-off");
+    let sp = dir.join("on.js");
+    let cp = dir.join("cfg.json");
+    let op = dir.join("out.json");
+    let hp = dir.join("h.js");
+    fs::write(&sp, &on).unwrap();
+    fs::write(&cp, dns_config()).unwrap();
+    fs::write(&hp, HARNESS).unwrap();
+    let ok = Command::new("node")
+        .arg(&hp).arg(&sp).arg(&cp).arg(&op).arg("1")
+        .status().map(|s| s.success()).unwrap_or(false);
+    if !ok {
+        eprintln!("未找到 node，跳过");
+        let _ = fs::remove_dir_all(&dir);
+        return;
+    }
+    // 再用 OFF 脚本处理已经注入过的配置
+    let sp2 = dir.join("off.js");
+    let op2 = dir.join("out2.json");
+    fs::write(&sp2, &off).unwrap();
+    let injected = fs::read_to_string(&op).unwrap();
+    fs::write(&cp, injected).unwrap();
+    let ok2 = Command::new("node")
+        .arg(&hp).arg(&sp2).arg(&cp).arg(&op2).arg("1")
+        .status().map(|s| s.success()).unwrap_or(false);
+    assert!(ok2);
+    let out: serde_json::Value = serde_json::from_str(&fs::read_to_string(&op2).unwrap()).unwrap();
+    assert!(
+        out["dns"]["hosts"].get("nrd.nie.163.com").is_none(),
+        "OFF 后应删掉自己写入的 hosts 记录"
+    );
+    assert_eq!(out["dns"]["hosts"]["keep.example.com"], "1.2.3.4");
+    let _ = fs::remove_dir_all(&dir);
 }

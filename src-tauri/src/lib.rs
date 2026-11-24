@@ -267,6 +267,10 @@ const LAYOUT_PROBE_JS: &str = r#"
       };
     })(),
     hostPage: { fields: document.querySelectorAll('#page-host input, #page-host textarea, #page-host select').length },
+    preview: (function () {
+      var t = (document.getElementById('previewBox') || {}).textContent || '';
+      return { sni: t.indexOf('RB_SNI_DOMAINS') >= 0, hosts: t.indexOf('hosts[d]') >= 0, len: t.length };
+    })(),
     logbarParent: document.querySelector('.logbar') ? document.querySelector('.logbar').parentElement.className : null,
     contentParent: document.querySelector('.content') ? document.querySelector('.content').parentElement.className : null,
     appKids: Array.prototype.map.call(document.querySelector('.app').children, function (e) {

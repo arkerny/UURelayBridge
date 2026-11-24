@@ -65,6 +65,7 @@ pub fn preview(
     project: &Project,
     app_version: &str,
     target_id: &str,
+    sni: &crate::adapters::SniLink,
 ) -> Result<(String, Compiled, Vec<Issue>), ExportError> {
     let adapter = adapters::by_id(target_id)
         .ok_or_else(|| ExportError::UnsupportedTarget(target_id.to_string()))?;
@@ -79,6 +80,7 @@ pub fn preview(
         enabled: true,
         compiled: &compiled,
         generated_at: &now_rfc3339(),
+        sni: Some(sni),
     })?;
     Ok((text, compiled, issues))
 }
@@ -92,6 +94,7 @@ pub fn export(
     model_schema: u32,
     target_id: &str,
     backup_limit: usize,
+    sni: &crate::adapters::SniLink,
 ) -> Result<Outcome, ExportError> {
     let adapter: Box<dyn Adapter> = adapters::by_id(target_id)
         .ok_or_else(|| ExportError::UnsupportedTarget(target_id.to_string()))?;
@@ -127,6 +130,7 @@ pub fn export(
         enabled,
         compiled: &compiled,
         generated_at: &generated_at,
+        sni: Some(sni),
     })?;
     let bytes = text.as_bytes().to_vec();
     let sha256 = writer::sha256_hex(&bytes);
@@ -251,13 +255,13 @@ mod tests {
     fn first_export_then_regenerate_backs_up() {
         let d = tmpdir("first");
         let p = paths(&d);
-        let o1 = export(&project(), &p, true, "1.1.0", 1, "clash-verge-rev", 5).unwrap();
+        let o1 = export(&project(), &p, true, "1.1.0", 1, "clash-verge-rev", 5, &Default::default()).unwrap();
         assert!(o1.backup.is_none());
         assert!(o1.script_path.exists());
         let text = std::fs::read_to_string(&o1.script_path).unwrap();
         assert!(text.contains("DOMAIN-SUFFIX,nrd.nie.163.com,Proxy"));
 
-        let o2 = export(&project(), &p, false, "1.1.0", 1, "clash-verge-rev", 5).unwrap();
+        let o2 = export(&project(), &p, false, "1.1.0", 1, "clash-verge-rev", 5, &Default::default()).unwrap();
         assert!(o2.backup.is_some(), "第二次生成必须备份上一版");
         let text2 = std::fs::read_to_string(&o2.script_path).unwrap();
         assert!(text2.contains("var RB_ENABLED = false;"));
@@ -273,7 +277,7 @@ mod tests {
         let p = paths(&d);
         let mut proj = project();
         proj.rules[0].match_.domain = vec!["bad domain".into()];
-        let err = export(&proj, &p, true, "1.1.0", 1, "clash-verge-rev", 5).unwrap_err();
+        let err = export(&proj, &p, true, "1.1.0", 1, "clash-verge-rev", 5, &Default::default()).unwrap_err();
         assert!(matches!(err, ExportError::Validation(_)));
         assert!(!p.script.exists());
         std::fs::remove_dir_all(&d).unwrap();
@@ -283,7 +287,7 @@ mod tests {
     fn unsupported_target_is_rejected() {
         let d = tmpdir("target");
         let p = paths(&d);
-        let err = export(&project(), &p, true, "1.1.0", 1, "v2ray", 5).unwrap_err();
+        let err = export(&project(), &p, true, "1.1.0", 1, "v2ray", 5, &Default::default()).unwrap_err();
         assert!(matches!(err, ExportError::UnsupportedTarget(_)));
         std::fs::remove_dir_all(&d).unwrap();
     }
@@ -292,8 +296,8 @@ mod tests {
     fn determinism_except_timestamp() {
         let d = tmpdir("determinism");
         let p = paths(&d);
-        let a = export(&project(), &p, true, "1.1.0", 1, "clash-verge-rev", 5).unwrap();
-        let b = export(&project(), &p, true, "1.1.0", 1, "clash-verge-rev", 5).unwrap();
+        let a = export(&project(), &p, true, "1.1.0", 1, "clash-verge-rev", 5, &Default::default()).unwrap();
+        let b = export(&project(), &p, true, "1.1.0", 1, "clash-verge-rev", 5, &Default::default()).unwrap();
         let ta = std::fs::read_to_string(&a.script_path).unwrap();
         let tb = std::fs::read_to_string(&b.script_path).unwrap();
         let strip = |s: &str| {

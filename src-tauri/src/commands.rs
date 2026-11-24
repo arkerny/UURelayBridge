@@ -93,7 +93,24 @@ fn paths_view(rt: &AppRuntime, target: &str) -> PathsView {
     }
 }
 
-fn render_preview(project: &Project, enabled: bool, target: &str) -> (String, usize, Vec<String>) {
+/// SNI 联动：Host 模式的域名/参数，转成适配器能用的形式。
+/// Clash 内核没有原生 TLS 分片，所以这里只做「域名 → 本机转发器」。
+pub fn sni_link(rt: &AppRuntime) -> adapters::SniLink {
+    let h = rt.host_config();
+    adapters::SniLink {
+        enabled: h.link_clash && !h.domains.is_empty(),
+        domains: h.domains.clone(),
+        mode: h.fragment_mode.clone(),
+        parts: h.fragment_parts,
+    }
+}
+
+fn render_preview(
+    project: &Project,
+    enabled: bool,
+    target: &str,
+    sni: &adapters::SniLink,
+) -> (String, usize, Vec<String>) {
     let Some(adapter) = adapters::by_id(target) else {
         return (String::new(), 0, Vec::new());
     };
@@ -105,6 +122,7 @@ fn render_preview(project: &Project, enabled: bool, target: &str) -> (String, us
             enabled,
             compiled: &compiled,
             generated_at: &crate::state::now_rfc3339(),
+            sni: Some(sni),
         })
         .unwrap_or_default();
     (
@@ -122,7 +140,8 @@ fn build_snapshot(rt: &AppRuntime) -> Snapshot {
     let settings = rt.settings();
     let project = rt.project();
     let validation = validator::validate(&project);
-    let (preview, compiled_rules, _) = render_preview(&project, settings.enabled, &settings.target);
+    let sni = sni_link(rt);
+    let (preview, compiled_rules, _) = render_preview(&project, settings.enabled, &settings.target, &sni);
     let paths = paths_view(rt, &settings.target);
     let manifest = exporter::manifest::read(&rt.paths.manifest(&settings.target));
     let backups = exporter::backup::list(&rt.paths.backups_dir())
@@ -202,6 +221,7 @@ fn generate_locked(rt: &AppRuntime, origin: &str) -> (bool, String) {
         MODEL_SCHEMA_VERSION,
         &settings.target,
         settings.backup_limit,
+        &sni_link(rt),
     ) {
         Ok(outcome) => {
             for step in &outcome.steps {
@@ -604,8 +624,9 @@ pub fn clear_logs(app: AppHandle, rt: State<'_, AppRuntime>) -> Snapshot {
 #[tauri::command]
 pub fn preview(project: Project, rt: State<'_, AppRuntime>) -> PreviewOut {
     let settings = rt.settings();
+    let sni = sni_link(&rt);
     let (text, compiled_rules, skipped) =
-        render_preview(&project, settings.enabled, &settings.target);
+        render_preview(&project, settings.enabled, &settings.target, &sni);
     PreviewOut {
         text,
         validation: validator::validate(&project),

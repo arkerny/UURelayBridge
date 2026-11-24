@@ -173,6 +173,10 @@
                   <span>走本机转发的域名（每行一个，后缀匹配，如 <code>nrd.nie.163.com</code>）</span>
                   <textarea id="hostDomains" rows="5" placeholder="nrd.nie.163.com"></textarea>
                 </label>
+                <label class="row">
+                  <input type="checkbox" id="hostLinkClash" />
+                  <span>同一份域名也写进 Clash 脚本（<code>dns.hosts</code> + <code>DIRECT</code> 交给本机转发器）</span>
+                </label>
               </div>
               <div class="pane-actions end">
                 <button class="btn ghost" id="btnHostSave">保存配置</button>

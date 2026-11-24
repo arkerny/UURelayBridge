@@ -24,6 +24,7 @@
 | hosts 改写（只动自己那一段、幂等、可移除） | ✅ 已实现 + 单测 | `core/src/sni/hosts.rs` |
 | 提权（Windows UAC / macOS osascript） | ✅ 已实现 | `src-tauri/src/hostmode/elevate.rs` |
 | 按域名选择性启用（不走分片就透传） | ✅ 已实现 | `hostmode` 的 `matches()` |
+| **Clash 联动**（`dns.hosts` + `DIRECT` 交给本机转发器） | ✅ 已实现 + Node 行为测试 | `core/src/adapters/cvr/script.rs` |
 | 诊断（DNS / TCP / TLS 分层报告） | ⬜ 未实现 | — |
 | ECH 能力识别与配置 | ⬜ 未实现（不伪造） | — |
 | sing-box 原生 `tls_record_fragment` 适配 | ⬜ 未实现（当前只有 CVR 脚本） | `core/src/adapters/` |

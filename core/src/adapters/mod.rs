@@ -6,6 +6,19 @@ pub mod singbox;
 
 use crate::compiler::Compiled;
 
+/// SNI 处理信息：与 Host 模式共用同一份域名列表。
+///
+/// Clash / Mihomo 没有原生的 TLS 分片能力，所以这里只做"把域名交给本机转发器"：
+/// 用 `dns.hosts` 把域名指向 127.0.0.1，再用 `DIRECT` 规则让内核连本机 443，
+/// 真正的分片由 UURelayBridge 的 Host 模式完成。
+#[derive(Debug, Clone, Default)]
+pub struct SniLink {
+    pub enabled: bool,
+    pub domains: Vec<String>,
+    pub mode: String,
+    pub parts: u8,
+}
+
 /// 渲染所需的全部输入（全部由调用方算好，适配器不做 IO）。
 pub struct RenderInput<'a> {
     pub app_version: &'a str,
@@ -14,6 +27,8 @@ pub struct RenderInput<'a> {
     pub compiled: &'a Compiled,
     /// RFC3339 时间戳，仅用于注释，不参与规则内容。
     pub generated_at: &'a str,
+    /// SNI 联动（None = 不生成 SNI 段）
+    pub sni: Option<&'a SniLink>,
 }
 
 #[derive(Debug, thiserror::Error)]

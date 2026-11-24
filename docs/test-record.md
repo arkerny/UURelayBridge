@@ -17,7 +17,7 @@ WebView2 157.0.4341.60　**日期**：2026-11-23
 | 依赖 | crates.io 直连 | ✅ 436 个 crate |
 | 图标 | `python tools/gen_icons.py` | ✅ `icon.ico`（16–256 多尺寸）、`icon.icns`（PNG 载荷）、托盘 on/off、macOS 模板图 |
 
-产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.3.0_x64-setup.exe`、`dist/RelayBridge_1.3.0_x64_en-US.msi`。
+产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.4.0_x64-setup.exe`、`dist/RelayBridge_1.4.0_x64_en-US.msi`。
 
 ## 2. 自动化测试
 
@@ -103,8 +103,8 @@ debug 与 release 两个产物都跑过，输出一致：
 
 | 产物 | 路径 | 说明 |
 |---|---|---|
-| NSIS | `dist/RelayBridge_1.3.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
-| MSI | `dist/RelayBridge_1.3.0_x64_en-US.msi` | 同上 |
+| NSIS | `dist/RelayBridge_1.4.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
+| MSI | `dist/RelayBridge_1.4.0_x64_en-US.msi` | 同上 |
 | 免安装 | `dist/RelayBridge.exe` | 双击即用 |
 
 卸载不删除 `%APPDATA%\RelayBridge`（用户数据与生成结果保留）。
@@ -126,7 +126,7 @@ debug 与 release 两个产物都跑过，输出一致：
 
 ---
 
-## 8. 回归记录（1.3.0）：双击没反应
+## 8. 回归记录（1.4.0）：双击没反应
 
 **现象**：用户双击 `dist\RelayBridge.exe` 后没有任何窗口，进程立即消失。
 事件日志里有两条 `Application Error`：`Exception code: 0xc0000409`（abort），模块为 `RelayBridge.exe`。
@@ -168,14 +168,14 @@ debug 与 release 两个产物都跑过，输出一致：
 |---|---|
 | 全新状态（删除 `%LOCALAPPDATA%\com.relaybridge.desktop`）+ 可写目录运行 | ✅ 窗口正常，自动创建 `EBWebView` |
 | 从受限目录运行 | ✅ 不再静默崩溃，弹出可读的错误对话框并写日志 |
-| 1.3.0 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
+| 1.4.0 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
 
 **给用户的结论**：程序本身没问题，但这个工作区目录受到写入限制；
 把 `dist\` 复制到工作区之外的普通目录（或把安装包复制出去再安装）即可。
 
 ---
 
-## 9. 回归记录（1.3.0）：日志面板位置错乱
+## 9. 回归记录（1.4.0）：日志面板位置错乱
 
 **现象**：界面里内容区被压成一条（约 44px），日志框被撑到 415px 并停在页面中部，
 窗口底部空出约 220px 的空白 —— 也就是"日志框位置不对"。
@@ -197,7 +197,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 **修复**：`.app` 改为纵向 flex（`topbar` / `banner` / `tabs` 固定，`content: 1fr`，
 `logbar: 220px`），日志面板内部同样改为 flex；横幅显示与否都不再影响其他元素位置。
 
-**验证**（1.3.0 release，1080×780 视口）：
+**验证**（1.4.0 release，1080×780 视口）：
 
 | 指标 | 结果 |
 |---|---|
@@ -209,7 +209,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 ---
 
-## 10. 1.3.0：改名 / 复制模式 / Host 模式
+## 10. 1.4.0：改名 / 复制模式 / Host 模式
 
 **改名**：crate `uurelaybridge(-core)`、产品名 `UURelayBridge`、identifier
 `com.uurelaybridge.desktop`、数据目录 `%APPDATA%\UURelayBridge`、窗口标题同步；
@@ -236,3 +236,28 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 **已知限制**：Host 模式停掉转发或退出程序后，被写入 hosts 的域名会不可用（界面已提示）；
 443 在 macOS 上需要 root。
+
+---
+
+## 11. 1.4.0：SNI 配置同时作用于 Clash 模式
+
+**做法**：Host 模式里的域名/分片参数是唯一一份，生成 Clash 脚本时同步使用：
+
+- `dns.hosts[<域名>] = "127.0.0.1"`（只改这几个键，用户其它 hosts 原样保留）；
+- 生成 `DOMAIN-SUFFIX,<域名>,DIRECT` 规则并排在最前面，让内核把流量交给本机转发器；
+- OFF 版本会把自己写进 `dns.hosts` 的 `127.0.0.1` 删掉。
+
+**测试**（Node 执行真实脚本，`core/tests/cvr_script_semantics.rs`）：
+
+| 用例 | 结果 |
+|---|---|
+| `sni_link_points_domains_to_localhost_and_adds_direct_rule` | ✅ hosts 指向 127.0.0.1、用户原有 hosts 保留、DIRECT 规则在最前、`MATCH` 仍在最后 |
+| `sni_link_is_idempotent` | ✅ 连跑 3 次，DIRECT 规则仍只有 1 条 |
+| `off_removes_sni_hosts_entry` | ✅ OFF 后自己写的 hosts 条目被删除，用户条目保留 |
+
+**应用内验证**：预置 `hostmode.json`（域名 `nrd.nie.163.com`、`link_clash=true`）后启动，
+布局探针读到预览文本包含 `RB_SNI_DOMAINS` 与 `hosts[d]`（长度 2878），
+Host 页 6 个表单字段、日志栏拖拽 340→460px 均正常。
+
+**已知语义**：同一域名若另有代理规则，会被 SNI 的 DIRECT 规则覆盖（分片优先），
+脚本头部与 README 均写明；不想联动可取消 Host 页的勾选。

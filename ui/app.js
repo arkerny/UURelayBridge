@@ -700,6 +700,7 @@
       $("hostParts").value = c.fragment_parts;
       $("hostDns").value = c.dns_server;
       $("hostDomains").value = (c.domains || []).join("\n");
+      $("hostLinkClash").checked = !!c.link_clash;
     }
     const pill = $("hostStatePill");
     pill.className = "state-pill" + (s.running ? " on" : "");
@@ -726,6 +727,7 @@
       fragment_mode: $("hostMode").value,
       fragment_parts: Math.max(2, Math.min(12, parseInt($("hostParts").value || "4", 10))),
       dns_server: $("hostDns").value.trim() || "223.5.5.5",
+      link_clash: $("hostLinkClash").checked,
       domains: $("hostDomains").value
         .split("\n")
         .map((s) => s.trim())
