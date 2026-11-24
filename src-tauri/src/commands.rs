@@ -563,6 +563,11 @@ pub fn host_apply_hosts(
     hostmode::save_config(&rt.paths.root, &cfg).ok();
 
     let root = rt.paths.root.clone();
+    // 写之前先原样备份，用户随时能「恢复原 hosts」
+    if let Err(e) = hostmode::hosts::backup_current(&root) {
+        rt.log("warn", "host", format!("备份 hosts 失败（继续执行）：{e}"));
+    }
+
     let handle = app.clone();
     let domains = cfg.domains.clone();
     std::thread::spawn(move || {
@@ -572,7 +577,7 @@ pub fn host_apply_hosts(
         let result = if hostmode::can_write_hosts() {
             hostmode::hosts::apply(&domains).map(|n| format!("已写入 {n} 条 hosts 记录"))
         } else {
-            match hostmode::elevate::elevate(true, &root) {
+            match hostmode::elevate::elevate_op("apply", &root) {
                 Ok(()) => hostmode::elevate::wait_result(&root, std::time::Duration::from_secs(90))
                     .map(|r| r.message),
                 Err(e) => Err(e),
@@ -587,6 +592,50 @@ pub fn host_apply_hosts(
 
     Ok(HostView {
         config: cfg,
+        status: hostmode::status(),
+    })
+}
+
+/// 恢复写入前的 hosts 备份。
+#[tauri::command]
+pub fn host_restore_hosts(
+    approved: bool,
+    app: AppHandle,
+    rt: State<'_, AppRuntime>,
+) -> Result<HostView, CommandError> {
+    if !approved {
+        return Err(CommandError::new(
+            "needs_approval",
+            "恢复 hosts 备份需要管理员权限，需要你的确认",
+        ));
+    }
+    let root = rt.paths.root.clone();
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let rt = handle.state::<AppRuntime>();
+        let _ = std::fs::remove_file(hostmode::elevate::op_result_path(&root));
+        rt.log("info", "host", "正在恢复 hosts 备份…");
+        let result = if hostmode::can_write_hosts() {
+            hostmode::hosts::restore_latest(&root).map(|p| match p {
+                Some(path) => format!("已恢复到 {}", path.display()),
+                None => "没有可用的备份".to_string(),
+            })
+        } else {
+            match hostmode::elevate::elevate_op("restore", &root) {
+                Ok(()) => hostmode::elevate::wait_result(&root, std::time::Duration::from_secs(90))
+                    .map(|r| r.message),
+                Err(e) => Err(e),
+            }
+        };
+        match result {
+            Ok(msg) => rt.log("ok", "host", format!("hosts：{msg}")),
+            Err(e) => rt.log("error", "host", format!("恢复 hosts 失败：{e}")),
+        }
+        let _ = handle.emit(STATE_EVENT, ());
+    });
+
+    Ok(HostView {
+        config: rt.host_config(),
         status: hostmode::status(),
     })
 }
@@ -618,7 +667,7 @@ pub fn host_clear_hosts(
                 }
             })
         } else {
-            match hostmode::elevate::elevate(false, &root) {
+            match hostmode::elevate::elevate_op("remove", &root) {
                 Ok(()) => hostmode::elevate::wait_result(&root, std::time::Duration::from_secs(90))
                     .map(|r| r.message),
                 Err(e) => Err(e),

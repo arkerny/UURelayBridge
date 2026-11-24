@@ -93,6 +93,75 @@ pub fn is_applied() -> bool {
     text.lines().any(|l| l.trim() == BEGIN)
 }
 
+/// 备份目录（由调用方传入，通常是数据目录下的 backups/hosts）。
+pub fn backup_dir(root: &std::path::Path) -> std::path::PathBuf {
+    root.join("backups").join("hosts")
+}
+
+/// 把当前 hosts 原样复制一份到备份目录，返回备份文件路径。
+/// 每次写入前调用一次；只保留最近 5 份。
+pub fn backup_current(root: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let dir = backup_dir(root);
+    fs::create_dir_all(&dir).map_err(|e| format!("创建备份目录失败：{e}"))?;
+    let text = read_hosts()?;
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = dir.join(format!("hosts-{}.txt", stamp));
+    fs::write(&path, text).map_err(|e| format!("备份 hosts 失败：{e}"))?;
+
+    // 只留最近 5 份
+    let mut items: Vec<_> = fs::read_dir(&dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n.starts_with("hosts-") && n.ends_with(".txt"))
+                        .unwrap_or(false)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    items.sort();
+    while items.len() > 5 {
+        let old = items.remove(0);
+        let _ = fs::remove_file(old);
+    }
+    Ok(path)
+}
+
+/// 最近一次备份（用于恢复）。
+pub fn latest_backup(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = backup_dir(root);
+    let mut items: Vec<_> = fs::read_dir(&dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("hosts-") && n.ends_with(".txt"))
+                .unwrap_or(false)
+        })
+        .collect();
+    items.sort();
+    items.pop()
+}
+
+/// 用最近一次备份覆盖当前 hosts。返回恢复用的备份路径。
+pub fn restore_latest(root: &std::path::Path) -> Result<Option<std::path::PathBuf>, String> {
+    let Some(path) = latest_backup(root) else {
+        return Ok(None);
+    };
+    let text = fs::read_to_string(&path).map_err(|e| format!("读取备份失败：{e}"))?;
+    write_hosts(&text)?;
+    Ok(Some(path))
+}
+
 /// 写入（或替换）我们的 hosts 段。返回写入的条目数。
 pub fn apply(domains: &[String]) -> Result<usize, String> {
     let text = read_hosts()?;
@@ -152,17 +221,15 @@ fn write_hosts(content: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     fn with_tmp_hosts<T>(f: impl FnOnce() -> T) -> T {
-        // 这几个用例都靠环境变量指定 hosts 路径，必须串行执行
-        use std::sync::{Mutex, OnceLock};
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let _guard = LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        // 这几个用例都靠环境变量指定 hosts 路径，必须串行执行（两个测试模块共用一把锁）
+        let _guard = super::ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
         let dir = crate::test_tmp_dir("hosts");
         let file = dir.join("hosts");
@@ -206,6 +273,59 @@ mod tests {
         with_tmp_hosts(|| {
             let n = apply(&["ok.com".into(), "bad domain".into(), "x#y".into()]).unwrap();
             assert_eq!(n, 1);
+        });
+    }
+}
+
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+
+    fn with_tmp_hosts<T>(f: impl FnOnce(&std::path::Path) -> T) -> T {
+        let _guard = super::ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+
+        let dir = crate::test_tmp_dir("hosts-backup");
+        let file = dir.join("hosts");
+        fs::write(&file, "127.0.0.1 localhost\n10.0.0.1 keep.example\n").unwrap();
+        std::env::set_var("UURELAYBRIDGE_HOSTS_FILE", &file);
+        let out = f(&dir);
+        std::env::remove_var("UURELAYBRIDGE_HOSTS_FILE");
+        out
+    }
+
+    #[test]
+    fn backup_then_restore_returns_original_bytes() {
+        with_tmp_hosts(|dir| {
+            let original = fs::read_to_string(hosts_path()).unwrap();
+
+            let backup = backup_current(dir).unwrap();
+            assert!(backup.exists());
+
+            apply(&["a.com".into(), "b.com".into()]).unwrap();
+            assert!(fs::read_to_string(hosts_path()).unwrap().contains("a.com"));
+
+            let restored = restore_latest(dir).unwrap().expect("应有备份");
+            assert_eq!(restored, backup);
+            assert_eq!(fs::read_to_string(hosts_path()).unwrap(), original);
+        });
+    }
+
+    #[test]
+    fn backups_are_pruned_to_five() {
+        with_tmp_hosts(|dir| {
+            for _ in 0..8 {
+                backup_current(dir).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let n = fs::read_dir(backup_dir(dir)).unwrap().count();
+            assert!(n <= 5, "备份应只保留 5 份，实际 {n}");
+        });
+    }
+
+    #[test]
+    fn restore_without_backup_is_noop() {
+        with_tmp_hosts(|dir| {
+            assert!(restore_latest(dir).unwrap().is_none());
         });
     }
 }

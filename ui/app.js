@@ -206,9 +206,14 @@
     const s = S.snap.settings;
     const last = S.snap.last;
     $("ovState").textContent = s.enabled ? "已启用（ON）" : "已停用（OFF）";
-    $("ovStateHint").textContent = s.enabled
-      ? "生成内容会注入规则；不代表 Clash 已生效"
-      : "生成的脚本不会注入任何规则";
+    const svc = S.snap.service || {};
+    let svcText = "服务未启动";
+    if (svc.running) {
+      svcText = svc.socks ? `SOCKS ${svc.socks}` : [svc.https && `TLS ${svc.https}`, svc.http && `HTTP ${svc.http}`].filter(Boolean).join(" · ");
+    }
+    $("ovStateHint").textContent = s.mode === "host"
+      ? svcText + (svc.hosts_applied ? " · Hosts 已写入" : "")
+      : `${svcText}${s.enabled ? "" : "（开关关闭）"}`;
     $("ovTarget").textContent = s.target === "clash-verge-rev" ? "Clash Verge Rev" : s.target;
     $("ovTargetHint").textContent = S.snap.manifest ? `目标版本：${S.snap.manifest.target_version}` : "扩展脚本（main(config)）";
     if (last) {
@@ -248,6 +253,9 @@
       isErr = true;
     } else if (last && last.enabled !== S.snap.settings.enabled) {
       msg = `状态与文件不一致：开关是 ${S.snap.settings.enabled ? "ON" : "OFF"}，但输出文件是按 ${last.enabled ? "ON" : "OFF"} 生成的，请重新生成。`;
+      isErr = true;
+    } else if (S.snap.service && S.snap.service.hosts_applied && !S.snap.settings.enabled) {
+      msg = "Hosts 仍指向本机，但服务没开 —— 这些域名现在打不开。打开开关或点「恢复原 hosts」。";
       isErr = true;
     } else if (issues.length) {
       msg = `启动时读取配置有问题：${issues[0]}`;
@@ -631,6 +639,7 @@
     $("btnHostSave").addEventListener("click", () => guard(saveHostConfig));
     $("btnHostApplyHosts").addEventListener("click", () => guard(applyHosts));
     $("btnHostClearHosts").addEventListener("click", () => guard(clearHosts));
+    $("btnHostRestore").addEventListener("click", () => guard(restoreHosts));
     $("hostDomains").addEventListener("change", () => (HOST.dirty = true));
 
     $("modalCancel").addEventListener("click", () => closeConfirm(false));
@@ -819,6 +828,19 @@
       HOST.view = await api("host_apply_hosts", { approved: true });
       renderHost();
       toast("已请求写入 hosts（留意 UAC 与日志）", "", 5000);
+    });
+  }
+
+  async function restoreHosts() {
+    const ok = await confirmDialog(
+      "恢复原 hosts",
+      "会用 UURelayBridge 写入前的备份覆盖当前 hosts（我们自己的那一段也会一起消失）。"
+    );
+    if (!ok) return;
+    await guard(async () => {
+      HOST.view = await api("host_restore_hosts", { approved: true });
+      renderHost();
+      toast("已请求恢复 hosts（留意 UAC 与日志）", "", 5000);
     });
   }
 

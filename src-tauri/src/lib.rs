@@ -321,6 +321,7 @@ pub fn run() {
             commands::service_stop,
             commands::host_apply_hosts,
             commands::host_clear_hosts,
+            commands::host_restore_hosts,
             commands::clear_logs,
             commands::preview,
             commands::set_mode,

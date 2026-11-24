@@ -17,7 +17,7 @@ WebView2 157.0.4341.60　**日期**：2026-11-23
 | 依赖 | crates.io 直连 | ✅ 436 个 crate |
 | 图标 | `python tools/gen_icons.py` | ✅ `icon.ico`（16–256 多尺寸）、`icon.icns`（PNG 载荷）、托盘 on/off、macOS 模板图 |
 
-产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.7.1_x64-setup.exe`、`dist/RelayBridge_1.7.1_x64_en-US.msi`。
+产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.8.0_x64-setup.exe`、`dist/RelayBridge_1.8.0_x64_en-US.msi`。
 
 ## 2. 自动化测试
 
@@ -103,8 +103,8 @@ debug 与 release 两个产物都跑过，输出一致：
 
 | 产物 | 路径 | 说明 |
 |---|---|---|
-| NSIS | `dist/RelayBridge_1.7.1_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
-| MSI | `dist/RelayBridge_1.7.1_x64_en-US.msi` | 同上 |
+| NSIS | `dist/RelayBridge_1.8.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
+| MSI | `dist/RelayBridge_1.8.0_x64_en-US.msi` | 同上 |
 | 免安装 | `dist/RelayBridge.exe` | 双击即用 |
 
 卸载不删除 `%APPDATA%\RelayBridge`（用户数据与生成结果保留）。
@@ -126,7 +126,7 @@ debug 与 release 两个产物都跑过，输出一致：
 
 ---
 
-## 8. 回归记录（1.7.1）：双击没反应
+## 8. 回归记录（1.8.0）：双击没反应
 
 **现象**：用户双击 `dist\RelayBridge.exe` 后没有任何窗口，进程立即消失。
 事件日志里有两条 `Application Error`：`Exception code: 0xc0000409`（abort），模块为 `RelayBridge.exe`。
@@ -168,14 +168,14 @@ debug 与 release 两个产物都跑过，输出一致：
 |---|---|
 | 全新状态（删除 `%LOCALAPPDATA%\com.relaybridge.desktop`）+ 可写目录运行 | ✅ 窗口正常，自动创建 `EBWebView` |
 | 从受限目录运行 | ✅ 不再静默崩溃，弹出可读的错误对话框并写日志 |
-| 1.7.1 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
+| 1.8.0 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
 
 **给用户的结论**：程序本身没问题，但这个工作区目录受到写入限制；
 把 `dist\` 复制到工作区之外的普通目录（或把安装包复制出去再安装）即可。
 
 ---
 
-## 9. 回归记录（1.7.1）：日志面板位置错乱
+## 9. 回归记录（1.8.0）：日志面板位置错乱
 
 **现象**：界面里内容区被压成一条（约 44px），日志框被撑到 415px 并停在页面中部，
 窗口底部空出约 220px 的空白 —— 也就是"日志框位置不对"。
@@ -197,7 +197,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 **修复**：`.app` 改为纵向 flex（`topbar` / `banner` / `tabs` 固定，`content: 1fr`，
 `logbar: 220px`），日志面板内部同样改为 flex；横幅显示与否都不再影响其他元素位置。
 
-**验证**（1.7.1 release，1080×780 视口）：
+**验证**（1.8.0 release，1080×780 视口）：
 
 | 指标 | 结果 |
 |---|---|
@@ -209,7 +209,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 ---
 
-## 10. 1.7.1：改名 / 复制模式 / Host 模式
+## 10. 1.8.0：改名 / 复制模式 / Host 模式
 
 **改名**：crate `uurelaybridge(-core)`、产品名 `UURelayBridge`、identifier
 `com.uurelaybridge.desktop`、数据目录 `%APPDATA%\UURelayBridge`、窗口标题同步；
@@ -239,7 +239,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 ---
 
-## 11. 1.7.1：SNI 配置同时作用于 Clash 模式
+## 11. 1.8.0：SNI 配置同时作用于 Clash 模式
 
 **做法**：Host 模式里的域名/分片参数是唯一一份，生成 Clash 脚本时同步使用：
 
@@ -264,7 +264,7 @@ Host 页 6 个表单字段、日志栏拖拽 340→460px 均正常。
 
 ---
 
-## 12. 1.7.1：模式选单 / DoH / 界面精简
+## 12. 1.8.0：模式选单 / DoH / 界面精简
 
 **模式选单**：顶部「Clash 规则 / 本机转发」二选一，存进 `settings.json` 的 `mode`；
 切换后标签页跟着变（clash：概览/规则/设置；host：本机转发/设置）。
@@ -292,7 +292,7 @@ Host 页改为「域名 / 端口 / 分片 / DNS」四项 + 状态侧栏；DoH �
 
 ---
 
-## 13. 1.7.1：内置 UU 远程端点预置
+## 13. 1.8.0：内置 UU 远程端点预置
 
 `core/src/presets.rs` 内置 6 个端点（`UU_ENDPOINTS` + 公共后缀 `UU_SUFFIX`），
 Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」按钮可一键填入。
@@ -309,7 +309,7 @@ Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」
 
 ---
 
-## 14. 1.7.1：修复顶部模式选单点击无响应
+## 14. 1.8.0：修复顶部模式选单点击无响应
 
 **现象**：顶部的「本机转发」按钮点了没反应，模式仍是 Clash 规则。
 
@@ -334,7 +334,7 @@ Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」
 
 ---
 
-## 15. 1.7.1：单开关 + Clash 走本地 SOCKS + Host 监听 80/443
+## 15. 1.8.0：单开关 + Clash 走本地 SOCKS + Host 监听 80/443
 
 **结构调整**：一个开关启动/停止服务；Clash 模式起本地 SOCKS5，脚本注入 `socks5` 节点与规则；
 Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连），并保留一键写 hosts。
@@ -351,3 +351,26 @@ Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连
 
 **注意**：SOCKS 模式下解析真实 IP 用的是配置里的 DNS（支持 DoH）；本机若开着 Clash TUN，
 可能拿到 fake-ip（日志里是 198.18.x.x），这属于正常现象，连接仍由 Clash 转发。
+
+---
+
+## 16. 1.8.0：Host 模式可用性 + hosts 可恢复 + 全功能回归
+
+**hosts 可恢复**
+- 每次写入前把原文件备份到 `<数据目录>/backups/hosts/hosts-<epoch>.txt`，只留最近 5 份；
+- Host 页新增「恢复原 hosts」（走同一套提权子进程 `--hosts-restore`）；
+- 顶部提示条：hosts 已写入但服务未开启时给出警示，避免"域名打不开还不知道为什么"；
+- 概览状态卡显示服务地址（SOCKS / TLS / HTTP）与 Hosts 状态。
+
+**一键回归脚本** `tools/e2e.py`（本机实跑 7/7 通过）：
+
+```
+== 1. 单元 / 行为测试 ==      PASS cargo test（61 单元 + 7 行为）
+== 2. hosts 往返 ==           PASS 备份 → 写入 → 恢复（内容逐字节一致）→ 移除（用户行保留）
+== 3. SOCKS 模式 ==           PASS api.nrd.nie.163.com 经分片握手 TLSv1.2 cert=1343B
+== 4. Host 模式 ==            PASS 443 转发 TLSv1.3；80 端口监听
+== 5. UI 两种模式 ==          PASS clash: 概览/规则/设置 · host: Host 模式/设置
+```
+
+**未验证**：真实 UAC 弹窗交互（需要人点确认）、真实系统 hosts 的写入/恢复
+（自检用 `UURELAYBRIDGE_HOSTS_FILE` 指到临时文件，逻辑一致但不是系统文件）。

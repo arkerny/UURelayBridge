@@ -1,6 +1,6 @@
 //! 提权执行 hosts 操作：自己写 hosts 失败时，拉起一个管理员子进程。
 //!
-//! 子进程就是本程序自己（`--hosts-apply` / `--hosts-remove`），
+//! 子进程就是本程序自己（`--hosts-apply` / `--hosts-remove` / `--hosts-restore`），
 //! 只做一次 hosts 读写然后退出，不启动 GUI。
 
 use std::path::Path;
@@ -23,7 +23,7 @@ pub fn op_result_path(data_dir: &Path) -> std::path::PathBuf {
 }
 
 /// 子进程入口：执行一次 hosts 操作，把结果写到 data_dir/hosts-op.json。
-pub fn run_helper(apply: bool, data_dir: &str) -> i32 {
+pub fn run_helper(op: &str, data_dir: &str) -> i32 {
     let dir = Path::new(data_dir);
     let cfg_path = dir.join("hostmode.json");
     let domains: Vec<String> = std::fs::read_to_string(&cfg_path)
@@ -32,17 +32,21 @@ pub fn run_helper(apply: bool, data_dir: &str) -> i32 {
         .map(|c| c.domains)
         .unwrap_or_default();
 
-    let (ok, message) = if apply {
-        match hosts::apply(&domains) {
+    let (ok, message) = match op {
+        "apply" => match hosts::apply(&domains) {
             Ok(n) => (true, format!("已写入 {n} 条 hosts 记录")),
             Err(e) => (false, e),
-        }
-    } else {
-        match hosts::remove() {
+        },
+        "restore" => match hosts::restore_latest(dir) {
+            Ok(Some(p)) => (true, format!("已恢复到备份：{}", p.display())),
+            Ok(None) => (false, "没有可用的 hosts 备份".to_string()),
+            Err(e) => (false, e),
+        },
+        _ => match hosts::remove() {
             Ok(true) => (true, "已移除 UURelayBridge 的 hosts 记录".to_string()),
             Ok(false) => (true, "hosts 里没有 UURelayBridge 的记录".to_string()),
             Err(e) => (false, e),
-        }
+        },
     };
 
     let res = OpResult {
@@ -62,8 +66,18 @@ pub fn run_helper(apply: bool, data_dir: &str) -> i32 {
     }
 }
 
+/// 提权执行一次操作（Windows UAC / macOS osascript）。
+pub fn elevate_op(op: &str, data_dir: &Path) -> Result<(), String> {
+    let verb = match op {
+        "apply" => "--hosts-apply",
+        "restore" => "--hosts-restore",
+        _ => "--hosts-remove",
+    };
+    run_elevated(verb, data_dir)
+}
+
 #[cfg(windows)]
-pub fn elevate(apply: bool, data_dir: &Path) -> Result<(), String> {
+fn run_elevated(verb: &str, data_dir: &Path) -> Result<(), String> {
     use std::ffi::c_void;
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
@@ -81,11 +95,6 @@ pub fn elevate(apply: bool, data_dir: &Path) -> Result<(), String> {
     }
 
     let exe = std::env::current_exe().map_err(|e| format!("取自身路径失败：{e}"))?;
-    let verb = if apply {
-        "--hosts-apply"
-    } else {
-        "--hosts-remove"
-    };
     let params = format!("{} \"{}\"", verb, data_dir.display());
 
     fn wide(s: &str) -> Vec<u16> {
@@ -102,7 +111,7 @@ pub fn elevate(apply: bool, data_dir: &Path) -> Result<(), String> {
             file.as_ptr(),
             prm.as_ptr(),
             std::ptr::null(),
-            1, // SW_SHOWNORMAL
+            1,
         )
     };
     if (r as isize) <= 32 {
@@ -112,13 +121,8 @@ pub fn elevate(apply: bool, data_dir: &Path) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-pub fn elevate(apply: bool, data_dir: &Path) -> Result<(), String> {
+fn run_elevated(verb: &str, data_dir: &Path) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| format!("取自身路径失败：{e}"))?;
-    let verb = if apply {
-        "--hosts-apply"
-    } else {
-        "--hosts-remove"
-    };
     let cmd = format!("\"{}\" {} \"{}\"", exe.display(), verb, data_dir.display());
     let script = format!(
         "do shell script \"{}\" with administrator privileges",
@@ -136,7 +140,7 @@ pub fn elevate(apply: bool, data_dir: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-pub fn elevate(_apply: bool, _data_dir: &Path) -> Result<(), String> {
+fn run_elevated(_verb: &str, _data_dir: &Path) -> Result<(), String> {
     Err("当前平台不支持自动提权，请用 sudo 运行".to_string())
 }
 

@@ -6,6 +6,7 @@
 //! 两种模式共用同一套"读 ClientHello → 查真实 IP → 分片 → 透传"逻辑。
 
 pub mod elevate;
+pub mod selftest;
 
 pub use uurelaybridge_core::sni::{dns, hosts, tls};
 

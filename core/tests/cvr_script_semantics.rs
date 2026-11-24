@@ -237,6 +237,8 @@ fn render_with_sni(project: &Project, enabled: bool, domains: &[&str]) -> String
         domains: domains.iter().map(|d| d.to_string()).collect(),
         mode: "record".to_string(),
         parts: 4,
+        socks_port: None,
+        socks_name: "UURelayBridge-SNI".to_string(),
     };
     ClashVergeRev
         .render(&RenderInput {
