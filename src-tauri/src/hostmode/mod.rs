@@ -420,9 +420,10 @@ fn socks_conn(
 
     // 1) 握手：05 NMETHODS METHODS...
     let mut head = [0u8; 2];
-    client
-        .read_exact(&mut head)
-        .map_err(|e| format!("SOCKS 握手读取失败：{e}"))?;
+    if client.read_exact(&mut head).is_err() {
+        // 探活连接 / 客户端直接关闭，属正常
+        return Ok(());
+    }
     if head[0] != 0x05 {
         return Err("不是 SOCKS5".to_string());
     }

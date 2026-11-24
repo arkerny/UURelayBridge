@@ -31,7 +31,7 @@ npx tauri build --target x86_64-apple-darwin
 
 ```
 src-tauri/target/aarch64-apple-darwin/release/bundle/macos/RelayBridge.app
-src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/RelayBridge_1.7.0_aarch64.dmg
+src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/RelayBridge_1.7.1_aarch64.dmg
 ```
 
 > 注意：workspace 的 target 目录在 `RelayBridge/target/` 下时，路径相应变成

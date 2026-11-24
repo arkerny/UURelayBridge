@@ -455,6 +455,22 @@ pub fn run() {
                     std::process::exit(0);
                 });
             }
+            // 上次开着开关的话，启动时把服务重新拉起来
+            if handle.state::<state::Runtime>().settings().enabled {
+                match commands::start_service(&handle, &handle.state::<state::Runtime>()) {
+                    Ok(st) => commands::log(&handle, "ok", "host", format!("已按上次状态启动服务：{}", st.view())),
+                    Err(e) => {
+                        commands::log(&handle, "error", "host", format!("启动服务失败：{e}"));
+                        if let Ok(mut s) = handle.state::<state::Runtime>().settings.write() {
+                            s.enabled = false;
+                            let _ = state::settings::save_settings(
+                                &handle.state::<state::Runtime>().paths.settings(),
+                                &s,
+                            );
+                        }
+                    }
+                }
+            }
             // Host 模式端到端自检：--host-selftest <端口> <域名>
             // 启动本地转发 20 秒后退出，供外部脚本验证"解析 SNI → DNS 查真实 IP → 分片转发"。
             if let Some(pos) = std::env::args().position(|a| a == "--host-selftest") {
