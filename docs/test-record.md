@@ -17,7 +17,7 @@ WebView2 157.0.4341.60　**日期**：2026-11-23
 | 依赖 | crates.io 直连 | ✅ 436 个 crate |
 | 图标 | `python tools/gen_icons.py` | ✅ `icon.ico`（16–256 多尺寸）、`icon.icns`（PNG 载荷）、托盘 on/off、macOS 模板图 |
 
-产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.2.2_x64-setup.exe`、`dist/RelayBridge_1.2.2_x64_en-US.msi`。
+产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.3.0_x64-setup.exe`、`dist/RelayBridge_1.3.0_x64_en-US.msi`。
 
 ## 2. 自动化测试
 
@@ -103,8 +103,8 @@ debug 与 release 两个产物都跑过，输出一致：
 
 | 产物 | 路径 | 说明 |
 |---|---|---|
-| NSIS | `dist/RelayBridge_1.2.2_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
-| MSI | `dist/RelayBridge_1.2.2_x64_en-US.msi` | 同上 |
+| NSIS | `dist/RelayBridge_1.3.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
+| MSI | `dist/RelayBridge_1.3.0_x64_en-US.msi` | 同上 |
 | 免安装 | `dist/RelayBridge.exe` | 双击即用 |
 
 卸载不删除 `%APPDATA%\RelayBridge`（用户数据与生成结果保留）。
@@ -126,7 +126,7 @@ debug 与 release 两个产物都跑过，输出一致：
 
 ---
 
-## 8. 回归记录（1.2.2）：双击没反应
+## 8. 回归记录（1.3.0）：双击没反应
 
 **现象**：用户双击 `dist\RelayBridge.exe` 后没有任何窗口，进程立即消失。
 事件日志里有两条 `Application Error`：`Exception code: 0xc0000409`（abort），模块为 `RelayBridge.exe`。
@@ -168,14 +168,14 @@ debug 与 release 两个产物都跑过，输出一致：
 |---|---|
 | 全新状态（删除 `%LOCALAPPDATA%\com.relaybridge.desktop`）+ 可写目录运行 | ✅ 窗口正常，自动创建 `EBWebView` |
 | 从受限目录运行 | ✅ 不再静默崩溃，弹出可读的错误对话框并写日志 |
-| 1.2.2 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
+| 1.3.0 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
 
 **给用户的结论**：程序本身没问题，但这个工作区目录受到写入限制；
 把 `dist\` 复制到工作区之外的普通目录（或把安装包复制出去再安装）即可。
 
 ---
 
-## 9. 回归记录（1.2.2）：日志面板位置错乱
+## 9. 回归记录（1.3.0）：日志面板位置错乱
 
 **现象**：界面里内容区被压成一条（约 44px），日志框被撑到 415px 并停在页面中部，
 窗口底部空出约 220px 的空白 —— 也就是"日志框位置不对"。
@@ -197,7 +197,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 **修复**：`.app` 改为纵向 flex（`topbar` / `banner` / `tabs` 固定，`content: 1fr`，
 `logbar: 220px`），日志面板内部同样改为 flex；横幅显示与否都不再影响其他元素位置。
 
-**验证**（1.2.2 release，1080×780 视口）：
+**验证**（1.3.0 release，1080×780 视口）：
 
 | 指标 | 结果 |
 |---|---|
@@ -206,3 +206,33 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 | 日志滚动区 | h=185，`scrollHeight 2772 > clientHeight 185` 可滚动 |
 | 滚动条 | `offsetWidth - clientWidth = 10`，位于面板右边缘（log.right = 1080） |
 | 主题 | `data-theme = light`（跟随系统） |
+
+---
+
+## 10. 1.3.0：改名 / 复制模式 / Host 模式
+
+**改名**：crate `uurelaybridge(-core)`、产品名 `UURelayBridge`、identifier
+`com.uurelaybridge.desktop`、数据目录 `%APPDATA%\UURelayBridge`、窗口标题同步；
+环境变量新增 `UURELAYBRIDGE_*` 并兼容旧的 `RELAYBRIDGE_*`。
+
+**改为"复制即用"**：开关与保存规则不再写文件，只在界面里生成内容；
+`导出到文件` 才落盘（旧版自动备份）。托盘菜单相应改为「导出配置到文件」。
+
+**Host 模式**（本地 TLS 转发 + 分片 + hosts）：
+
+| 检查 | 结果 |
+|---|---|
+| TLS ClientHello 解析 / Record 分片 / TCP 分段 | 单元测试通过（`core/src/sni/tls.rs`） |
+| DNS 查询（绕过 hosts） | 单元测试 + 实跑（`example.com` 在 1ms 内返回） |
+| hosts 改写（幂等、保留其它行、可移除） | 单元测试通过（串行执行避免环境变量竞争） |
+| 端到端：配置域名走分片 | ✅ `tools/host_selftest.py`：`example.com` 经本地转发完成 TLS1.3 握手，日志为「TLS Record 分片 4 段，共 517 字节」 |
+| 端到端：未配置域名直接透传 | ✅ `www.iana.org` 同样握手成功（未分片） |
+| 转发开销 | 直连基线 4333ms，经转发 4338ms（本机网络本身就要 4.3s） |
+| 日志栏可拖拽 | ✅ 探针模拟拖拽：`--logbar-h` 220px → 340px，实际高度同步 |
+| Host 页存在 | ✅ 5 个表单字段 |
+
+**未验证**：UAC 提权的真实交互（需要人点确认）、macOS 的 root 监听与 osascript 提权、
+写入真实系统 hosts（仅用 `UURELAYBRIDGE_HOSTS_FILE` 指向临时文件做了单测）。
+
+**已知限制**：Host 模式停掉转发或退出程序后，被写入 hosts 的域名会不可用（界面已提示）；
+443 在 macOS 上需要 root。

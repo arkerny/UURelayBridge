@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>RelayBridge</title>
+    <title>UURelayBridge</title>
     <script src="theme-boot.js"></script>
     <link rel="stylesheet" href="style.css" />
   </head>
@@ -13,7 +13,7 @@
         <div class="brand">
           <span class="logo" aria-hidden="true"></span>
           <div class="brand-text">
-            <strong>RelayBridge</strong>
+            <strong>UURelayBridge</strong>
             <span class="muted" id="appMeta">加载中…</span>
           </div>
         </div>
@@ -27,7 +27,7 @@
             <input type="checkbox" id="toggleEnabled" />
             <span class="slider"></span>
           </label>
-          <button class="btn" id="btnRegen">重新生成</button>
+          <button class="btn" id="btnRegen">导出到文件</button>
           <button class="btn ghost" id="btnOpenOut">打开输出目录</button>
         </div>
       </header>
@@ -37,6 +37,7 @@
       <nav class="tabs">
         <button class="tab active" data-tab="overview">概览</button>
         <button class="tab" data-tab="rules">规则</button>
+        <button class="tab" data-tab="host">Host 模式</button>
         <button class="tab" data-tab="settings">设置</button>
         <div class="tabs-spacer"></div>
         <span class="muted small" id="ruleCounter"></span>
@@ -132,6 +133,76 @@
           </div>
         </section>
 
+        <!-- Host 模式 -->
+        <section class="page" id="page-host">
+          <div class="pane-head">
+            <h2>Host 模式：本地 TLS 分片转发</h2>
+            <div class="pane-actions">
+              <span class="state-pill" id="hostStatePill"><span class="dot"></span><span id="hostStateText">未启动</span></span>
+              <button class="btn" id="btnHostStart">启动转发</button>
+              <button class="btn ghost" id="btnHostStop">停止</button>
+            </div>
+          </div>
+
+          <div class="split">
+            <div class="pane">
+              <div class="form-grid">
+                <label class="row">
+                  <span>监听端口</span>
+                  <input id="hostPort" type="number" min="1" max="65535" />
+                  <span class="muted small">HTTPS 需要 443（Windows 普通用户可绑；macOS 需 root）</span>
+                </label>
+                <label class="row">
+                  <span>分片方式</span>
+                  <select id="hostMode">
+                    <option value="record">TLS Record 分片（推荐）</option>
+                    <option value="segment">TCP 分段</option>
+                    <option value="off">只转发，不分片</option>
+                  </select>
+                </label>
+                <label class="row">
+                  <span>分片段数</span>
+                  <input id="hostParts" type="number" min="2" max="12" />
+                </label>
+                <label class="row">
+                  <span>DNS 服务器</span>
+                  <input id="hostDns" type="text" spellcheck="false" />
+                  <span class="muted small">用来查真实 IP（绕过被改写的 hosts）</span>
+                </label>
+                <label class="field">
+                  <span>走本机转发的域名（每行一个，后缀匹配，如 <code>nrd.nie.163.com</code>）</span>
+                  <textarea id="hostDomains" rows="5" placeholder="nrd.nie.163.com"></textarea>
+                </label>
+              </div>
+              <div class="pane-actions end">
+                <button class="btn ghost" id="btnHostSave">保存配置</button>
+                <button class="btn ghost" id="btnHostApplyHosts">写入 Hosts（需管理员）</button>
+                <button class="btn ghost danger" id="btnHostClearHosts">移除 Hosts</button>
+              </div>
+            </div>
+
+            <div class="pane side">
+              <div class="pane-head"><h2>它怎么工作</h2></div>
+              <ol class="steps">
+                <li>本机监听 <code>127.0.0.1:端口</code>，只接受 TLS。</li>
+                <li>读 ClientHello，取出 SNI，用 DNS 查真实 IP（不会绕回 hosts 里的 127.0.0.1）。</li>
+                <li>按域名决定是否把这条记录拆成多段再转发，之后双向透传。</li>
+                <li>hosts 把域名指到 127.0.0.1，系统才把流量送进来 —— 这一步需要管理员。</li>
+              </ol>
+              <div class="kv">
+                <div><span class="muted">hosts</span><code id="hostHostsState">—</code></div>
+                <div><span class="muted">连接 / 分片</span><code id="hostStats">—</code></div>
+                <div><span class="muted">监听</span><code id="hostListen">—</code></div>
+              </div>
+              <p class="note">
+                ⚠ 写入 hosts 后，这些域名只有在「本程序运行且转发已启动」时才可用；
+                退出前请先「移除 Hosts」，或重新启动本程序再关闭。
+                本程序不会改系统代理、防火墙或 Clash 配置。
+              </p>
+            </div>
+          </div>
+        </section>
+
         <!-- 设置 -->
         <section class="page" id="page-settings">
           <div class="pane-head"><h2>设置</h2></div>
@@ -196,6 +267,7 @@
       </main>
 
       <section class="logbar">
+        <div class="log-resize" id="logResize" title="拖动调整日志栏高度"></div>
         <div class="logbar-head">
           <div class="logbar-title">
             <span class="dot live"></span> 实时日志

@@ -5,11 +5,11 @@ use std::sync::MutexGuard;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use relaybridge_core::adapters::{self, RenderInput};
-use relaybridge_core::compiler;
-use relaybridge_core::exporter::{self, manifest::Manifest};
-use relaybridge_core::model::{Project, MODEL_SCHEMA_VERSION};
-use relaybridge_core::validator::{self, has_errors, Issue};
+use uurelaybridge_core::adapters::{self, RenderInput};
+use uurelaybridge_core::compiler;
+use uurelaybridge_core::exporter::{self, manifest::Manifest};
+use uurelaybridge_core::model::{Project, MODEL_SCHEMA_VERSION};
+use uurelaybridge_core::validator::{self, has_errors, Issue};
 
 use crate::platform;
 use crate::state::{AppPaths, LastRun, LogEntry, Runtime as AppRuntime, Settings};
@@ -301,15 +301,11 @@ pub fn apply_enabled(app: &AppHandle, enabled: bool, approved: bool, origin: &st
         "info",
         origin,
         format!(
-            "已授权：{} RelayBridge 规则",
+            "已授权：{} RelayBridge 规则（只更新生成内容，不写文件）",
             if enabled { "启用" } else { "停用" }
         ),
     );
-    let (ok, _msg) = generate_locked(&rt, origin);
     drop(guard);
-    if !ok {
-        rt.log("warn", origin, "状态已切换，但文件生成失败，请重试");
-    }
     tray::refresh(app);
     emit_state(app);
 }
@@ -321,7 +317,7 @@ pub fn apply_regenerate(app: &AppHandle, approved: bool, origin: &str) {
         return;
     }
     let guard = lock_write(&rt);
-    rt.log("info", origin, "已授权：重新生成配置");
+    rt.log("info", origin, "已授权：导出配置到文件");
     let _ = generate_locked(&rt, origin);
     drop(guard);
     tray::refresh(app);
@@ -370,7 +366,205 @@ pub fn toggle_main_window(app: &AppHandle) {
     }
 }
 
-// ---------------------------------------------------------------- 命令
+// ---------------------------------------------------------------- Host 模式
+
+use crate::hostmode::{self, HostConfig, HostView};
+use std::sync::Arc;
+
+#[tauri::command]
+pub fn host_get(rt: State<'_, AppRuntime>) -> HostView {
+    HostView {
+        config: rt.host_config(),
+        status: hostmode::status(),
+    }
+}
+
+#[tauri::command]
+pub fn host_set_config(
+    config: HostConfig,
+    approved: bool,
+    rt: State<'_, AppRuntime>,
+) -> Result<HostView, CommandError> {
+    if !approved {
+        return Err(CommandError::new(
+            "needs_approval",
+            "保存 Host 模式配置会写入 hostmode.json，需要你的确认",
+        ));
+    }
+    let mut cfg = config;
+    cfg.sanitize();
+    hostmode::save_config(&rt.paths.root, &cfg).map_err(|e| {
+        CommandError::new("io_error", format!("保存 hostmode.json 失败：{e}"))
+    })?;
+    rt.set_host_config(cfg.clone());
+    rt.log(
+        "info",
+        "host",
+        format!(
+            "Host 配置已保存：127.0.0.1:{} · {} 段 · {} 个域名",
+            cfg.listen_port,
+            cfg.fragment_parts,
+            cfg.domains.len()
+        ),
+    );
+    Ok(HostView {
+        config: cfg,
+        status: hostmode::status(),
+    })
+}
+
+#[tauri::command]
+pub fn host_start(
+    approved: bool,
+    app: AppHandle,
+    rt: State<'_, AppRuntime>,
+) -> Result<HostView, CommandError> {
+    if !approved {
+        return Err(CommandError::new(
+            "needs_approval",
+            "启动 Host 模式会在本机监听端口，需要你的确认",
+        ));
+    }
+    let cfg = rt.host_config();
+    if cfg.domains.is_empty() {
+        return Err(CommandError::new(
+            "bad_config",
+            "请先填写要走分片的域名（例如 nrd.nie.163.com）",
+        ));
+    }
+    let handle = app.clone();
+    let logger: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |m: &str| {
+        handle.state::<AppRuntime>().log("info", "host", m);
+    });
+    match hostmode::start(cfg.clone(), logger) {
+        Ok(addr) => {
+            rt.log("ok", "host", format!("Host 模式已启动：{addr}"));
+            Ok(HostView {
+                config: cfg,
+                status: hostmode::status(),
+            })
+        }
+        Err(e) => {
+            rt.log("error", "host", e.clone());
+            Err(CommandError::new("host_start", e))
+        }
+    }
+}
+
+#[tauri::command]
+pub fn host_stop(app: AppHandle, rt: State<'_, AppRuntime>) -> HostView {
+    hostmode::stop();
+    rt.log("info", "host", "Host 模式已停止监听");
+    let _ = app.emit(STATE_EVENT, build_snapshot(&rt));
+    HostView {
+        config: rt.host_config(),
+        status: hostmode::status(),
+    }
+}
+
+/// 写 hosts。没有权限时自动拉起提权子进程，结果异步写日志。
+#[tauri::command]
+pub fn host_apply_hosts(
+    approved: bool,
+    app: AppHandle,
+    rt: State<'_, AppRuntime>,
+) -> Result<HostView, CommandError> {
+    if !approved {
+        return Err(CommandError::new(
+            "needs_approval",
+            "修改系统 hosts 会影响本机解析，且需要管理员权限，需要你的确认",
+        ));
+    }
+    let cfg = rt.host_config();
+    if cfg.domains.is_empty() {
+        return Err(CommandError::new("bad_config", "没有要写入 hosts 的域名"));
+    }
+    // 先落盘配置：提权子进程要靠它读域名
+    hostmode::save_config(&rt.paths.root, &cfg).ok();
+
+    let root = rt.paths.root.clone();
+    let handle = app.clone();
+    let domains = cfg.domains.clone();
+    std::thread::spawn(move || {
+        let rt = handle.state::<AppRuntime>();
+        let _ = std::fs::remove_file(hostmode::elevate::op_result_path(&root));
+        rt.log("info", "host", "正在写入 hosts（可能需要管理员授权）…");
+        let result = if hostmode::can_write_hosts() {
+            hostmode::hosts::apply(&domains).map(|n| format!("已写入 {n} 条 hosts 记录"))
+        } else {
+            match hostmode::elevate::elevate(true, &root) {
+                Ok(()) => hostmode::elevate::wait_result(&root, std::time::Duration::from_secs(90))
+                    .map(|r| r.message)
+                    .map_err(|e| e),
+                Err(e) => Err(e),
+            }
+        };
+        match result {
+            Ok(msg) => rt.log("ok", "host", format!("hosts：{msg}")),
+            Err(e) => rt.log("error", "host", format!("写入 hosts 失败：{e}")),
+        }
+        let _ = handle.emit(STATE_EVENT, ());
+    });
+
+    Ok(HostView {
+        config: cfg,
+        status: hostmode::status(),
+    })
+}
+
+#[tauri::command]
+pub fn host_clear_hosts(
+    approved: bool,
+    app: AppHandle,
+    rt: State<'_, AppRuntime>,
+) -> Result<HostView, CommandError> {
+    if !approved {
+        return Err(CommandError::new(
+            "needs_approval",
+            "移除 hosts 记录需要管理员权限，需要你的确认",
+        ));
+    }
+    let root = rt.paths.root.clone();
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let rt = handle.state::<AppRuntime>();
+        let _ = std::fs::remove_file(hostmode::elevate::op_result_path(&root));
+        rt.log("info", "host", "正在移除 hosts 记录（可能需要管理员授权）…");
+        let result = if hostmode::can_write_hosts() {
+            hostmode::hosts::remove().map(|changed| {
+                if changed {
+                    "已移除 UURelayBridge 的 hosts 记录".to_string()
+                } else {
+                    "hosts 里没有 UURelayBridge 的记录".to_string()
+                }
+            })
+        } else {
+            match hostmode::elevate::elevate(false, &root) {
+                Ok(()) => hostmode::elevate::wait_result(&root, std::time::Duration::from_secs(90))
+                    .map(|r| r.message),
+                Err(e) => Err(e),
+            }
+        };
+        match result {
+            Ok(msg) => rt.log("ok", "host", format!("hosts：{msg}")),
+            Err(e) => rt.log("error", "host", format!("移除 hosts 失败：{e}")),
+        }
+        let _ = handle.emit(STATE_EVENT, ());
+    });
+
+    Ok(HostView {
+        config: rt.host_config(),
+        status: hostmode::status(),
+    })
+}
+
+#[tauri::command]
+pub fn host_open_help() -> String {
+    "Host 模式需要三步：1) 启动本地转发；2) 写入 hosts（管理员）；3) 保持本程序运行。".to_string()
+}
+
+// ---------------------------------------------------------------- 原有命令
+
 
 #[tauri::command]
 pub fn bootstrap(rt: State<'_, AppRuntime>) -> Snapshot {
@@ -492,9 +686,8 @@ pub fn save_project(
     rt.log(
         "info",
         "ui",
-        format!("已授权：保存规则（{} 条）", rt.project().rules.len()),
+        format!("已授权：保存规则（{} 条）；生成内容已更新，不写文件", rt.project().rules.len()),
     );
-    let _ = generate_locked(&rt, "ui");
     drop(guard);
     tray::refresh(&app);
     emit_state(&app);
@@ -545,7 +738,11 @@ pub fn update_settings(
         ),
     );
     if needs_regen {
-        let _ = generate_locked(&rt, "ui");
+        rt.log(
+            "info",
+            "ui",
+            "设置已保存；生成内容随开关实时更新，不再自动写文件",
+        );
     }
     drop(guard);
     tray::refresh(&app);

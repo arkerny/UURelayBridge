@@ -8,11 +8,11 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 // 纯逻辑（路径 / 设置读写）放在 core crate，这里只做转出口
-pub use relaybridge_core::{paths, settings};
+pub use uurelaybridge_core::{paths, settings};
 pub use paths::AppPaths;
 pub use settings::Settings;
 
-use relaybridge_core::model::Project as ProjectModel;
+use uurelaybridge_core::model::Project as ProjectModel;
 
 pub const LOG_CAPACITY: usize = 800;
 pub const LOG_EVENT: &str = "rb://log";
@@ -41,6 +41,8 @@ pub struct Runtime {
     pub paths: AppPaths,
     pub settings: RwLock<Settings>,
     pub project: RwLock<ProjectModel>,
+    /// Host 模式配置（监听端口 / 域名 / 分片方式）
+    pub host: RwLock<crate::hostmode::HostConfig>,
     /// 启动时读取配置遇到的问题（损坏、版本不符……），只展示不自动修复。
     pub issues: Mutex<Vec<String>>,
     pub logs: Mutex<VecDeque<LogEntry>>,
@@ -71,10 +73,12 @@ impl Runtime {
             issues.push(i.clone());
         }
 
+        let host_cfg = crate::hostmode::load_config(&paths.root);
         let rt = Self {
             paths,
             settings: RwLock::new(s.value),
             project: RwLock::new(p.value),
+            host: RwLock::new(host_cfg),
             issues: Mutex::new(issues),
             logs: Mutex::new(VecDeque::with_capacity(LOG_CAPACITY)),
             last: RwLock::new(None),
@@ -99,6 +103,19 @@ impl Runtime {
 
     pub fn project(&self) -> ProjectModel {
         self.project.read().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    pub fn host_config(&self) -> crate::hostmode::HostConfig {
+        self.host
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn set_host_config(&self, cfg: crate::hostmode::HostConfig) {
+        if let Ok(mut g) = self.host.write() {
+            *g = cfg;
+        }
     }
 
     pub fn last(&self) -> Option<LastRun> {
@@ -126,7 +143,7 @@ impl Runtime {
             buf.push_back(entry.clone());
         }
         // 排障用：设置 RELAYBRIDGE_LOG_FILE 后把日志同时写进文件（默认关闭）
-        if let Ok(path) = std::env::var("RELAYBRIDGE_LOG_FILE") {
+        if let Some(path) = crate::env_opt(&["UURELAYBRIDGE_LOG_FILE", "RELAYBRIDGE_LOG_FILE"]) {
             if !path.trim().is_empty() {
                 use std::io::Write;
                 if let Ok(mut f) = std::fs::OpenOptions::new()
@@ -189,7 +206,7 @@ mod tests {
 
     #[test]
     fn runtime_starts_without_touching_disk() {
-        let d = relaybridge_core::test_tmp_dir("rt");
+        let d = uurelaybridge_core::test_tmp_dir("rt");
         std::fs::create_dir_all(&d).unwrap();
         let rt = Runtime::new(AppPaths::new(d.clone()));
         assert!(!rt.settings().enabled);
@@ -201,7 +218,7 @@ mod tests {
 
     #[test]
     fn log_ring_is_bounded() {
-        let d = relaybridge_core::test_tmp_dir("rt-log");
+        let d = uurelaybridge_core::test_tmp_dir("rt-log");
         let rt = Runtime::new(AppPaths::new(d.clone()));
         for i in 0..(LOG_CAPACITY + 50) {
             rt.log("info", "test", format!("line {}", i));

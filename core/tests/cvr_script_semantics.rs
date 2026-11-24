@@ -7,10 +7,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-use relaybridge_core::adapters::{Adapter, RenderInput};
-use relaybridge_core::adapters::cvr::ClashVergeRev;
-use relaybridge_core::compiler;
-use relaybridge_core::model::{Action, Match, Project, Rule};
+use uurelaybridge_core::adapters::{Adapter, RenderInput};
+use uurelaybridge_core::adapters::cvr::ClashVergeRev;
+use uurelaybridge_core::compiler;
+use uurelaybridge_core::model::{Action, Match, Project, Rule};
 
 const HARNESS: &str = r#"
 const fs = require("node:fs");
@@ -30,7 +30,7 @@ fn unique() -> usize {
 }
 
 fn tmpdir(tag: &str) -> PathBuf {
-    relaybridge_core::test_tmp_dir(&format!("{}-{}", tag, unique()))
+    uurelaybridge_core::test_tmp_dir(&format!("{}-{}", tag, unique()))
 }
 
 fn sample_project(enabled: bool) -> Project {

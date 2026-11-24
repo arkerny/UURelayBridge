@@ -1,21 +1,21 @@
 [package]
-name = "relaybridge"
+name = "uurelaybridge"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "RelayBridge - lightweight Clash Verge Rev extension config generator"
-authors = ["RelayBridge"]
-default-run = "relaybridge"
+description = "UURelayBridge - Clash Verge Rev extension config generator + local TLS relay"
+authors = ["UURelayBridge"]
+default-run = "uurelaybridge"
 
 [lib]
-name = "relaybridge_lib"
+name = "uurelaybridge_lib"
 crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-relaybridge-core = { path = "../core" }
+uurelaybridge-core = { path = "../core" }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

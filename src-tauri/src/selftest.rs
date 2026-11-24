@@ -36,7 +36,7 @@ pub fn run(app: &AppHandle) -> i32 {
     };
 
     // 1) 准备一份规则并"保存"（等价于界面里点保存后写入 project.json）
-    let project: relaybridge_core::model::Project = match serde_json::from_value(serde_json::json!({
+    let project: uurelaybridge_core::model::Project = match serde_json::from_value(serde_json::json!({
         "schema_version": 1,
         "name": "selftest",
         "rules": [{
@@ -53,7 +53,7 @@ pub fn run(app: &AppHandle) -> i32 {
             return 1;
         }
     };
-    let saved = relaybridge_core::settings::save_project(&rt.paths.project(), &project);
+    let saved = uurelaybridge_core::settings::save_project(&rt.paths.project(), &project);
     {
         let mut g = match rt.project.write() {
             Ok(g) => g,
@@ -91,7 +91,7 @@ pub fn run(app: &AppHandle) -> i32 {
 
     // 4) 再次生成 → 必须产生备份
     commands::apply_regenerate(app, true, "selftest");
-    let backups = relaybridge_core::exporter::backup::list(&rt.paths.backups_dir())
+    let backups = uurelaybridge_core::exporter::backup::list(&rt.paths.backups_dir())
         .map(|v| v.len())
         .unwrap_or(0);
     check("backup-created", backups >= 1, format!("备份 {backups} 份"));
@@ -118,7 +118,7 @@ pub fn run(app: &AppHandle) -> i32 {
     {
         let mut s = rt.settings();
         s.theme = "light".to_string();
-        let saved_settings = relaybridge_core::settings::save_settings(&rt.paths.settings(), &s);
+        let saved_settings = uurelaybridge_core::settings::save_settings(&rt.paths.settings(), &s);
         {
             let mut g = match rt.settings.write() {
                 Ok(g) => g,
@@ -137,7 +137,7 @@ pub fn run(app: &AppHandle) -> i32 {
         // 复位，避免污染后续使用
         let mut back = rt.settings();
         back.theme = "system".to_string();
-        let _ = relaybridge_core::settings::save_settings(&rt.paths.settings(), &back);
+        let _ = uurelaybridge_core::settings::save_settings(&rt.paths.settings(), &back);
         {
             let mut g = match rt.settings.write() {
                 Ok(g) => g,

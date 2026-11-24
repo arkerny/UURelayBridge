@@ -28,9 +28,9 @@ pub fn setup(app: &AppHandle, enabled: bool, last_failed: bool) -> tauri::Result
         .icon(icon)
         .icon_as_template(platform::tray_icon_is_template())
         .tooltip(if enabled {
-            "RelayBridge · 已启用"
+            "UURelayBridge · 已启用"
         } else {
-            "RelayBridge · 已停用"
+            "UURelayBridge · 已停用"
         })
         .menu(&built.menu)
         // macOS：左键弹菜单（符合菜单栏应用习惯）；Windows：左键打开主界面
@@ -112,11 +112,11 @@ pub fn refresh(app: &AppHandle) {
                 let _ = h.tray.set_icon(Some(img));
             }
             let _ = h.tray.set_tooltip(Some(if failed {
-                "RelayBridge · 上次生成失败"
+                "UURelayBridge · 上次生成失败"
             } else if settings.enabled {
-                "RelayBridge · 已启用"
+                "UURelayBridge · 已启用"
             } else {
-                "RelayBridge · 已停用"
+                "UURelayBridge · 已停用"
             }));
         }
     }

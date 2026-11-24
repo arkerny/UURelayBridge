@@ -1,9 +1,15 @@
-# RelayBridge v1.2.2
+# UURelayBridge v1.3
 
-轻量级 **Clash Verge Rev 扩展配置生成器**。常驻托盘 / 菜单栏，把你定义的域名 / IP 规则生成一段
-`main(config)` 扩展脚本，由你手动粘贴进 Clash Verge Rev。
+轻量级 **Clash Verge Rev 规则生成器 + 本地 TLS 分片转发器**。Windows 托盘 / macOS 菜单栏常驻。
 
-> RelayBridge **不是**代理客户端：不跑内核、不接管代理、不改订阅、不碰 Clash Verge 的任何文件。
+两种用法，互不冲突：
+
+| 模式 | 你得到什么 | 需要管理员 |
+|---|---|---|
+| **规则模式**（默认） | 一段 `main(config)` 扩展脚本，**复制**后自己粘进 Clash Verge Rev | 不需要 |
+| **Host 模式** | 本机监听 443 的 TLS 转发器 + hosts 指向 127.0.0.1，按域名对 ClientHello 分片 | 改 hosts 需要 |
+
+> UURelayBridge **不是**代理客户端：不跑内核、不接管系统代理、不改订阅、不碰 Clash Verge 的文件。
 
 ---
 
@@ -11,22 +17,19 @@
 
 **做**
 
-- 维护一份自己的规则模型（`project.json`）。
-- 按 ON/OFF 生成 `relaybridge.js`（Clash Verge Rev 扩展脚本），并保留历史备份 + `manifest.json`（SHA-256）。
-- 托盘 / 菜单栏常驻：关闭窗口不退出，可随时唤回。
-- 实时日志、生成预览、单条规则启停、JSON 高级编辑。
-- 深色 / 浅色主题，默认**跟随系统**；切换后标题栏与界面同时生效，选择会存进 `settings.json`。
-- 原子写入：写临时文件 → fsync → 替换；失败时旧文件保持完好。
+- 维护自己的规则模型（`project.json`），生成 Clash Verge Rev 扩展脚本，界面上直接**复制**。
+- Host 模式：本地 TLS 转发 + 按域名做 TLS Record / TCP 分段，用来绕过按明文 SNI 匹配的阻断。
+- 原子写入、历史备份、`manifest.json`（含 SHA-256）—— 只针对**导出**这一个动作。
+- 深/浅主题（默认跟随系统）、可拖拽高度的实时日志。
 
 **不做（硬性约束）**
 
 - 不修改 Clash Verge 的订阅、配置、数据库、安装目录。
-- 不自动导入扩展脚本，不自动重载配置，不调用 Controller API，不探测 Clash 状态。
-- 不改系统代理、Hosts、防火墙，不装服务 / 系统扩展 / 网络扩展。
-- 不需要管理员权限。
-
-**所有写操作都要经过用户授权**：界面每次落盘前弹确认框，后端命令再校验一次
-`approved=true`（前端绕过也无效）；托盘上的点击本身即视为授权。**启动阶段只读不写。**
+- 不自动导入扩展脚本、不调用 Controller API、不探测 Clash 状态。
+- 不改系统代理、不改防火墙、不装服务 / 驱动 / 系统扩展。
+- 不自动启动第三方内核。
+- 默认**不写任何文件**：生成结果留在界面里，你自己复制。
+- 所有落盘 / 系统改动都需要你在界面上确认；改 hosts 才会请求管理员权限。
 
 ---
 
@@ -34,164 +37,107 @@
 
 | 页 | 内容 |
 |---|---|
-| 概览 | 状态 / 目标内核 / 最近生成 / 输出文件（含 sha256）、脚本预览、接入步骤、校验提示 |
-| 规则 | 表格增删改、单条启停、域名 / IP-CIDR、动作（代理到策略组 / 直连 / 拒绝）、JSON 编辑器 |
-| 设置 | 主题（跟随系统 / 浅色 / 深色）、启动隐藏、关闭到托盘、操作提示、目标内核、备份份数、目录入口 |
-| 底部 | 实时日志（分级着色、自动滚动可关、可清空、可复制） |
-
-规则改动先进「草稿」，点 **保存规则** 才落盘并重新生成 —— 这样"改"和"写"是两件事。
-
----
-
-## 三、工程结构（workspace）
-
-```
-RelayBridge/
-├── Cargo.toml                  # workspace（core + src-tauri）
-├── core/                       # relaybridge-core：纯逻辑，不依赖 Tauri，可单测
-│   └── src/{model,rules,compiler,validator,paths,settings}.rs
-│       ├── adapters/           # Adapter trait + cvr（实现）/ mihomo / singbox（占位）
-│       └── exporter/           # writer(原子写) / backup / manifest
-├── src-tauri/                  # relaybridge：Tauri 2 应用
-│   ├── src/{lib,main,commands,selftest}.rs
-│   ├── src/state/              # 运行期状态（RwLock 内存态）
-│   ├── src/tray/               # 托盘 / 菜单栏
-│   └── src/platform/           # windows.rs / macos.rs（仅系统调用）
-├── ui/                         # 原生 HTML/CSS/JS，无构建步骤
-├── icons/                      # icon.ico / icon.icns / 托盘 on-off / macOS 模板图
-├── docs/                       # 接入指南、macOS 构建、架构、测试记录、示例脚本
-└── tools/                      # 图标生成器、UI 绑定检查等开发脚本
-```
-
-**为什么拆两层**：核心逻辑不链接 Tauri，才能在任意环境跑 `cargo test`；
-新增内核只需要在 `core/src/adapters/` 加一个实现，UI 和命令层都不用改。
+| 概览 | 状态、目标内核、上次导出、预览全文 + 复制 / 导出到文件、接入步骤 |
+| 规则 | 表格增删改、单条启停、域名 / IP-CIDR、三种动作、JSON 高级编辑 |
+| **Host 模式** | 监听端口、分片方式与段数、DNS、域名列表、启动/停止、写入/移除 Hosts、连接统计 |
+| 设置 | 主题、启动隐藏、关闭到托盘、提示、目标内核、备份份数、目录入口 |
+| 底部日志 | 实时分级日志；**上边缘可拖动改高度**（双击复位 220px），高度记在 localStorage |
 
 ---
 
-## 四、构建
+## 三、规则模式：复制即用
 
-依赖：Rust 1.77+（实测 1.93）、Node 18+（仅打包）、WebView2（Win10/11 自带）。
+1. 「规则」页新建规则，例如域名 `nrd.nie.163.com`（后缀匹配，覆盖所有子域），
+   动作选「代理到策略组」，填你在 Clash 配置里真实存在的策略组名。
+2. 顶部开关切 **ON** —— 只切换"生成内容"，**不写文件**。
+3. 「概览 → 生成内容预览」点 **复制**。
+4. Clash Verge Rev → 订阅 → 右键配置 → 编辑扩展脚本 → 粘贴 → 保存 → 重载。
+
+想留一份文件副本时再点 **导出到文件**（写到 `output/clash-verge-rev/`，旧版自动备份）。
+脚本语义：ON 把规则插到最前（`MATCH` 之前）；OFF 只摘掉自己注入的完全相同规则；重复加载不会叠加。
+
+---
+
+## 四、Host 模式：本地 TLS 分片转发
+
+链路：
+
+```
+应用 → hosts 把域名指向 127.0.0.1 → UURelayBridge 监听 443
+     → 读 ClientHello 取 SNI → 用 DNS 查真实 IP（绕过被改写的 hosts）
+     → 按需把这条记录拆成多段 → 转发 → 之后双向透传（不终止 TLS）
+```
+
+操作顺序：
+
+1. 「Host 模式」页填域名（如 `nrd.nie.163.com`）、端口 443、分片方式（TLS Record，4 段）。
+2. **启动转发** —— 先让本机开始监听。
+3. **写入 Hosts** —— 会弹 UAC；只改自己标记的那一段，其它行原样保留。
+4. 正常使用目标应用；日志里能看到 `域名 → 真实IP（TLS Record 分片 N 段 …）`。
+
+**顺序很重要**：先启动转发，再写 hosts。不用时点「移除 Hosts」，或保持程序运行。
+
+限制（不承诺解决）：DNS 被污染、IP 被墙、QUIC 被封、目标服务器不可用、中间设备能完整重组 TLS、
+主动探测类封锁 —— 这些不是分片能解决的。分片只对"按明文 SNI 简单匹配"的设备有效。
+
+---
+
+## 五、构建
 
 ```powershell
-cd RelayBridge
-
-# 只出可执行文件
-cargo build --release
-# 产物：target\release\relaybridge.exe
-
-# 出安装包（NSIS + MSI，用户级安装）
+cd UURelayBridge          # 仓库根目录（workspace）
+cargo build --release     # 产物：target\release\UURelayBridge.exe
 npm install -D @tauri-apps/cli@^2
-npx tauri build
-# 产物：target\release\bundle\nsis\RelayBridge_1.2.2_x64-setup.exe
-#       target\release\bundle\msi\RelayBridge_1.2.2_x64_en-US.msi
+npx tauri build           # NSIS + MSI，用户级安装
 ```
 
-macOS 见 [docs/build-macos.md](docs/build-macos.md)（`.app` 必须在 Mac 上编译、签名、公证）。
-
-> 本仓库的 `target/` 已随 workspace 上移：所有产物都在 `RelayBridge/target/` 下。
-
----
-
-## 五、使用
-
-1. 「规则」页新建规则，例如：域名 `nrd.nie.163.com`（后缀匹配，自动覆盖所有子域），
-   动作「代理到 `🔰 节点选择`」（必须是你 Clash 配置里真实存在的策略组名）。
-2. 点 **保存规则** → 确认 → 写入 `project.json` 并生成脚本。
-3. 顶部开关切 **ON** → 确认 → 生成启用版本。
-4. Clash Verge Rev → 订阅 → 右键配置 → **编辑扩展脚本** → 粘贴 `relaybridge.js` 全文 → 保存 → 重载。
-5. 停用：开关切 OFF → 重新粘贴 → 重载（程序不会替你通知 Clash）。
-
-图文细节与 FAQ：[docs/手动接入指南.md](docs/手动接入指南.md)
-生成的脚本长什么样：[docs/sample-relaybridge.js](docs/sample-relaybridge.js)
+macOS 见 [docs/build-macos.md](docs/build-macos.md)（`.app` 必须在 Mac 上编译/签名/公证）。
 
 ---
 
 ## 六、数据目录
 
 ```
-Windows: %APPDATA%\RelayBridge\
-macOS:   ~/Library/Application Support/RelayBridge/
+Windows: %APPDATA%\UURelayBridge\
+macOS:   ~/Library/Application Support/UURelayBridge/
 ├── settings.json
 ├── project.json
-├── output\clash-verge-rev\
-│   ├── relaybridge.js
-│   └── manifest.json          # 应用版本 / 模型版本 / 目标 / 时间 / 文件名 / sha256 / 是否启用
-└── backups\
-    └── relaybridge-<epoch>-<ms>.js
+├── hostmode.json          # Host 模式配置
+├── hosts-op.json          # 提权子进程回写的结果
+├── output/clash-verge-rev/{relaybridge.js, manifest.json}
+└── backups/
 ```
 
-路径全部来自 Tauri Path API，业务代码里没有盘符或用户名硬编码；
-`state/paths.rs` 是唯一路径来源，输出目录名做了字符过滤防穿越。
-
-**排障/便携用环境变量**（普通用户不需要）：
-
-| 变量 | 作用 |
-|---|---|
-| `RELAYBRIDGE_DATA_DIR` | 覆盖数据目录（便携模式 / 自动化测试） |
-| `RELAYBRIDGE_WEBVIEW_DIR` | 覆盖 WebView2 用户数据目录 |
-| `RELAYBRIDGE_LOG_FILE` | 把实时日志同时追加到文件 |
-| `RELAYBRIDGE_WEBVIEW_ARGS` | 给 WebView2 传额外浏览器参数（排障用） |
-| `RELAYBRIDGE_DUMP_LAYOUT` | 启动后把首屏真实布局写进日志（排障用） |
+环境变量（排障 / 便携）：`UURELAYBRIDGE_DATA_DIR`、`UURELAYBRIDGE_WEBVIEW_DIR`、
+`UURELAYBRIDGE_LOG_FILE`、`UURELAYBRIDGE_WEBVIEW_ARGS`、`UURELAYBRIDGE_DUMP_LAYOUT`、
+`UURELAYBRIDGE_HOSTS_FILE`（测试用，覆盖 hosts 路径）。旧的 `RELAYBRIDGE_*` 仍然兼容。
 
 ---
 
-## 七、故障排查：双击没反应 / 启动失败
-
-**症状**：双击 `RelayBridge.exe` 后没有任何窗口，进程闪一下就没（任务管理器里也看不到常驻）。
-
-**现在会怎样**：从 1.2.2 起，启动失败会弹一个对话框说明原因，并把同样内容写到
-`%TEMP%\relaybridge-startup-error.log`（如果设置了 `RELAYBRIDGE_LOG_FILE` 则写到该文件）。
-
-**最常见的原因：WebView2 的数据目录不可写。**
-
-Tauri 把 `%LOCALAPPDATA%\<应用ID>`（本程序是 `%LOCALAPPDATA%\com.relaybridge.desktop`）
-作为 WebView2 的用户数据目录，而 WebView2 **不会**自己创建它；目录不存在或不可写时
-`CreateCoreWebView2Environment` 直接返回 `Access denied (0x5)`，窗口就建不出来。
-
-程序现在会先自己创建该目录（不行就依次退到 `%APPDATA%\RelayBridge\webview2`、临时目录），
-但如果整个进程被限制"只能写自己所在目录"（部分沙箱 / 安全软件 / 受控文件夹访问会这样），
-三个位置都会失败 —— 这种情况**把程序挪出受限目录**即可：
-
-1. 把 `RelayBridge.exe`（或整个 `dist/`）复制到工作区之外的普通目录，
-   例如 `C:\Users\arkerny\Desktop\relaybridge-standalone\`，再双击；
-2. 或者把安装包也复制到那样的目录后再运行（安装器默认装到 `%LOCALAPPDATA%\Programs\RelayBridge`）；
-3. 或者设置环境变量 `RELAYBRIDGE_WEBVIEW_DIR=<可写目录>` 后启动。
-
-> 实测记录（1.2.2）：同一个 exe 放在 `Desktop\hdu-uu-fix\...` 下启动会因 `Access denied` 失败
-> （连 Task Scheduler 启动也一样）；复制到 `Desktop\relaybridge-standalone\` 后窗口正常打开，
-> 并自动创建 `%LOCALAPPDATA%\com.relaybridge.desktop\EBWebView`。
-> 说明限制来自"进程所在目录"这条策略，而不是程序本身。
-
-其他原因：没装 WebView2 运行时（Win10 早期版本可能没有，装 Microsoft Edge WebView2 Runtime 即可）、
-磁盘已满、`%LOCALAPPDATA%` 权限被改坏。
-
-## 八、测试
+## 七、测试
 
 ```powershell
-cargo test -p relaybridge-core        # 41 个单元测试 + 4 个"真跑 JS"的行为测试
-cargo run -p relaybridge-core --example render_sample   # 打印一份示例脚本
-cargo build -p relaybridge            # 构建后再跑下面的自检
-.\target\debug\relaybridge.exe --selftest               # 真实进程内跑授权→生成→备份→OFF
+cargo test -p uurelaybridge-core     # 52 单元测试 + 4 个真跑 Node 的脚本行为测试
+cargo run -p uurelaybridge-core --example render_sample
+.\target\debug\UURelayBridge.exe --selftest          # 授权→生成→备份→OFF 全链路
+.\target\debug\UURelayBridge.exe --host-selftest 18443 example.com   # 本地转发 20 秒
 ```
 
-- 单元测试：模型 / 域名与 CIDR 校验 / 编译去重保序 / 校验器 / 原子写 / 备份轮转 / 设置损坏恢复 / 路径穿越 / 日志环形缓冲。
-- 行为测试（`core/tests/cvr_script_semantics.rs`）：把生成的 JS 交给 **Node** 执行，断言
-  注入顺序、重复加载不叠加、OFF 精确还原、空规则不改 `rules`。
-- `--selftest`：应用内端到端，输出 `SELFTEST OK` 并写日志。
+- 单元测试覆盖：模型 / 域名与 CIDR 校验 / 编译去重保序 / 校验器 / 原子写 / 备份轮转 /
+  设置损坏恢复 / 主题 / 路径穿越 / 日志 / **TLS ClientHello 解析与分片 / DNS 报文 / hosts 改写**。
+- 脚本行为测试：把生成的 JS 交给真实 Node 执行，断言注入顺序、幂等、OFF 精确还原。
+- `--host-selftest`：真实进程起转发，配合 `tools/host_selftest.py` 验证「配置域名分片 + 未配置域名透传」。
 
-结果见 [docs/test-record.md](docs/test-record.md)（含未验证项，如实标注）。
+结果见 [docs/test-record.md](docs/test-record.md)。
 
 ---
 
-## 九、已知限制
+## 八、已知限制
 
-- 首期只实现 Clash Verge Rev 适配器；Mihomo / sing-box 保留接口，调用会明确报「未实现」。
-- 不做系统通知（用界面 toast + 日志，少一个插件依赖）。
+- 首期只实现 Clash Verge Rev 适配器；Mihomo / sing-box 仍是占位（调用会明确报未实现）。
+- Host 模式的 443 监听：Windows 普通用户可绑；macOS 需要 root。
+- 分片参数是经验值（默认 4 段）；不同网络设备行为不同，可能需要微调。
 - 策略组名无法替你校验是否存在（脚本里只 `console.warn`）。
-- macOS 侧代码同源但**未在本机验证**（Windows 机器无法交叉编译 `.app`）。
+- macOS 侧代码同源但**未在本机验证**。
 
----
-
-## 十、许可
-
-仅用于个人配置管理。使用前请自行确认所在网络/单位的相关规定。
+SNI 模块的长期设计（多内核、ECH、诊断）见 [docs/SNI模块设计.md](docs/SNI模块设计.md)。

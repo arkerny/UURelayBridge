@@ -379,10 +379,10 @@
   async function toggleEnabled(want) {
     const n = (project().rules || []).filter((r) => r.enabled).length;
     const ok = await confirmDialog(
-      want ? "启用 RelayBridge" : "停用 RelayBridge",
+      want ? "启用规则注入" : "停用规则注入",
       want
-        ? `将把 <b>${n}</b> 条已启用规则写入 <code>relaybridge.js</code>（旧文件自动备份）。<br/>这不会修改 Clash Verge 的任何内容，也不代表 Clash 已生效。`
-        : `将生成不再注入规则的新版本，并备份当前文件。<br/>已经加载进 Clash Verge 的规则，需要你重新加载脚本后才会消失。`
+        ? `生成的脚本会把 <b>${n}</b> 条已启用规则插到最前面。<br/>不会写任何文件，点「复制」后自己粘贴进 Clash Verge。`
+        : `生成的脚本不再注入任何规则。<br/>已经贴进 Clash Verge 的旧内容需要你手动重新粘贴才会消失。`
     );
     if (!ok) {
       renderHeader();
@@ -392,16 +392,14 @@
       const snap = await api("set_enabled", { approved: true, enabled: want });
       S.snap = snap;
       renderAll();
-      const last = snap.last;
-      if (last && !last.ok) toast("状态已切换，但生成失败：" + last.message, "err", 6000);
-      else toast(want ? "已启用，配置已生成" : "已停用，配置已生成");
+      toast(want ? "已启用：复制预览即可使用" : "已停用：重新复制并粘贴");
     });
   }
 
-  async function regenerate() {
+  async function exportScript() {
     const ok = await confirmDialog(
-      "重新生成配置",
-      `将重新生成 <code>${esc(S.snap.paths.script)}</code>，旧版本自动备份到 backups/。`
+      "导出到文件",
+      `会把当前内容写到 <code>${esc(S.snap.paths.script)}</code>（旧文件自动备份）。<br/>只是给你一个文件副本，不会碰 Clash Verge。`
     );
     if (!ok) return;
     await guard(async () => {
@@ -409,7 +407,7 @@
       S.snap = snap;
       renderAll();
       const last = snap.last;
-      toast(last && last.ok ? "生成完成" : "生成失败：" + (last ? last.message : "未知原因"), last && last.ok ? "" : "err", 6000);
+      toast(last && last.ok ? "已导出" : "导出失败：" + (last ? last.message : "未知原因"), last && last.ok ? "" : "err", 6000);
     });
   }
 
@@ -559,7 +557,7 @@
       await toggleEnabled(want);
     });
 
-    $("btnRegen").addEventListener("click", () => guard(regenerate));
+    $("btnRegen").addEventListener("click", () => guard(exportScript));
     $("btnOpenOut").addEventListener("click", () => guard(() => api("open_output_dir")));
     $("btnOpenOut2").addEventListener("click", () => guard(() => api("open_output_dir")));
     $("btnOpenData").addEventListener("click", () => guard(() => api("open_data_dir")));
@@ -598,6 +596,14 @@
     $("jsonCancel").addEventListener("click", () => ($("jsonModal").hidden = true));
     $("jsonOk").addEventListener("click", () => guard(applyJson));
 
+    // Host 模式
+    $("btnHostSave").addEventListener("click", () => guard(saveHostConfig));
+    $("btnHostStart").addEventListener("click", () => guard(startHost));
+    $("btnHostStop").addEventListener("click", () => guard(stopHost));
+    $("btnHostApplyHosts").addEventListener("click", () => guard(applyHosts));
+    $("btnHostClearHosts").addEventListener("click", () => guard(clearHosts));
+    $("hostDomains").addEventListener("change", () => (HOST.dirty = true));
+
     $("modalCancel").addEventListener("click", () => closeConfirm(false));
     $("modalOk").addEventListener("click", () => closeConfirm(true));
     $("modal").addEventListener("click", (e) => {
@@ -628,15 +634,204 @@
     });
   }
 
+  // ------------------------------------------------------------ 日志栏拖拽
+  const LogResize = {
+    key: "uurelaybridge.logbar-h",
+    init() {
+      const saved = parseInt(localStorage.getItem(this.key) || "", 10);
+      if (saved >= 120) this.apply(saved);
+      const handle = $("logResize");
+      const bar = document.querySelector(".logbar");
+      let dragging = false;
+      let startY = 0;
+      let startH = 0;
+
+      handle.addEventListener("pointerdown", (e) => {
+        dragging = true;
+        startY = e.clientY;
+        startH = bar.getBoundingClientRect().height;
+        try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+        handle.classList.add("active");
+        document.body.classList.add("resizing");
+        e.preventDefault();
+      });
+      handle.addEventListener("pointermove", (e) => {
+        if (!dragging) return;
+        const max = Math.round(window.innerHeight * 0.7);
+        const h = Math.min(Math.max(120, startH - (e.clientY - startY)), max);
+        this.apply(h);
+      });
+      const finish = () => {
+        if (!dragging) return;
+        dragging = false;
+        handle.classList.remove("active");
+        document.body.classList.remove("resizing");
+        localStorage.setItem(this.key, String(Math.round(bar.getBoundingClientRect().height)));
+      };
+      handle.addEventListener("pointerup", finish);
+      handle.addEventListener("pointercancel", finish);
+      handle.addEventListener("dblclick", () => {
+        this.apply(220);
+        localStorage.setItem(this.key, "220");
+      });
+    },
+    apply(px) {
+      document.documentElement.style.setProperty("--logbar-h", px + "px");
+    },
+  };
+
+  // ------------------------------------------------------------ Host 模式
+  const HOST = { view: null, timer: null, dirty: false };
+
+  async function loadHost() {
+    if (!hasBackend()) return;
+    HOST.view = await api("host_get");
+    HOST.dirty = false;
+    renderHost();
+  }
+
+  function renderHost() {
+    const v = HOST.view;
+    if (!v) return;
+    const { config: c, status: s } = v;
+    if (!HOST.dirty) {
+      $("hostPort").value = c.listen_port;
+      $("hostMode").value = c.fragment_mode;
+      $("hostParts").value = c.fragment_parts;
+      $("hostDns").value = c.dns_server;
+      $("hostDomains").value = (c.domains || []).join("\n");
+    }
+    const pill = $("hostStatePill");
+    pill.className = "state-pill" + (s.running ? " on" : "");
+    $("hostStateText").textContent = s.running ? "运行中" : "未启动";
+    $("hostListen").textContent = s.listen || "—";
+    $("hostHostsState").textContent = s.hosts_applied
+      ? `已写入 ${s.hosts_domains.length} 条` + (s.can_write_hosts ? "" : "（需管理员）")
+      : "未写入";
+    $("hostStats").textContent = `${s.conns} / ${s.fragmented}` +
+      (s.failed ? ` · 失败 ${s.failed}` : "") +
+      ` · ↑${Math.round(s.bytes_up / 1024)}KB ↓${Math.round(s.bytes_down / 1024)}KB`;
+    $("btnHostStart").disabled = s.running;
+    $("btnHostStop").disabled = !s.running;
+    $("btnHostApplyHosts").disabled = s.hosts_applied;
+    $("btnHostClearHosts").disabled = !s.hosts_applied;
+  }
+
+  function hostFormConfig() {
+    const v = HOST.view;
+    const base = v ? clone(v.config) : {};
+    return {
+      ...base,
+      listen_port: Math.max(1, Math.min(65535, parseInt($("hostPort").value || "443", 10))),
+      fragment_mode: $("hostMode").value,
+      fragment_parts: Math.max(2, Math.min(12, parseInt($("hostParts").value || "4", 10))),
+      dns_server: $("hostDns").value.trim() || "223.5.5.5",
+      domains: $("hostDomains").value
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    };
+  }
+
+  async function saveHostConfig() {
+    const cfg = hostFormConfig();
+    const ok = await confirmDialog("保存 Host 配置", "将写入 <code>hostmode.json</code>（不改 hosts、不动系统）。");
+    if (!ok) return;
+    await guard(async () => {
+      HOST.view = await api("host_set_config", { config: cfg, approved: true });
+      HOST.dirty = false;
+      renderHost();
+      toast("Host 配置已保存");
+    });
+  }
+
+  async function startHost() {
+    const cfg = hostFormConfig();
+    if (!cfg.domains.length) {
+      toast("请先填写要走分片的域名", "warn");
+      return;
+    }
+    const ok = await confirmDialog(
+      "启动本地转发",
+      `将在 <code>127.0.0.1:${cfg.listen_port}</code> 监听 TLS，并对 ${cfg.domains.length} 个域名做 ${
+        cfg.fragment_mode === "record" ? "TLS Record 分片" : cfg.fragment_mode === "segment" ? "TCP 分段" : "纯转发"
+      }。<br/>不改 hosts、不改系统设置。`
+    );
+    if (!ok) return;
+    await guard(async () => {
+      HOST.view = await api("host_set_config", { config: cfg, approved: true });
+      HOST.view = await api("host_start", { approved: true });
+      renderHost();
+      toast("转发已启动");
+    });
+  }
+
+  async function stopHost() {
+    await guard(async () => {
+      HOST.view = await api("host_stop");
+      renderHost();
+      toast("已停止监听");
+    });
+  }
+
+  async function applyHosts() {
+    const cfg = hostFormConfig();
+    if (!cfg.domains.length) {
+      toast("请先填写域名", "warn");
+      return;
+    }
+    const ok = await confirmDialog(
+      "写入系统 Hosts（需要管理员）",
+      `将把以下域名指向 127.0.0.1：<br/><code>${cfg.domains.slice(0, 8).join("<br/>")}</code>` +
+        (cfg.domains.length > 8 ? `<br/>…共 ${cfg.domains.length} 个` : "") +
+        "<br/><br/>这一步会弹 UAC 提权，并且只有在本程序运行且转发已启动时这些域名才可用。"
+    );
+    if (!ok) return;
+    await guard(async () => {
+      await api("host_set_config", { config: cfg, approved: true });
+      HOST.view = await api("host_apply_hosts", { approved: true });
+      renderHost();
+      toast("已请求写入 hosts（留意 UAC 与日志）", "", 5000);
+    });
+  }
+
+  async function clearHosts() {
+    const ok = await confirmDialog("移除 Hosts 记录", "会删除 UURelayBridge 写入的那一段，其它行原样保留。");
+    if (!ok) return;
+    await guard(async () => {
+      HOST.view = await api("host_clear_hosts", { approved: true });
+      renderHost();
+      toast("已请求移除 hosts", "", 4000);
+    });
+  }
+
+  function pollHost() {
+    if (HOST.timer) clearInterval(HOST.timer);
+    HOST.timer = setInterval(async () => {
+      if (!hasBackend() || !document.getElementById("page-host").classList.contains("active")) return;
+      try {
+        HOST.view = await api("host_get");
+        renderHost();
+      } catch (e) {
+        /* 忽略轮询错误 */
+      }
+    }, 1500);
+  }
+
   function switchTab(name) {
     document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
     document.querySelectorAll(".page").forEach((p) => p.classList.toggle("active", p.id === "page-" + name));
     if (name === "rules" && S.dirty) renderRules();
+    if (name === "host" && hasBackend()) {
+      guard(loadHost);
+      pollHost();
+    }
   }
 
   // ------------------------------------------------------------ 启动
   async function boot() {
     Theme.init();
+    LogResize.init();
     bind();
     if (!hasBackend()) {
       Theme.set("system");

@@ -15,9 +15,9 @@ pub fn status_text(enabled: bool, last_failed: bool) -> String {
     if last_failed {
         "⚠ 上次生成失败·请打开主界面".to_string()
     } else if enabled {
-        "RelayBridge 已启用".to_string()
+        "UURelayBridge 已启用".to_string()
     } else {
-        "RelayBridge 已停用".to_string()
+        "UURelayBridge 已停用".to_string()
     }
 }
 
@@ -32,7 +32,7 @@ pub fn build(app: &AppHandle, enabled: bool, last_failed: bool) -> tauri::Result
         None::<&str>,
     )?;
     let open = MenuItem::with_id(app, "open", "打开主界面", true, None::<&str>)?;
-    let regen = MenuItem::with_id(app, "regen", "重新生成配置", true, None::<&str>)?;
+    let regen = MenuItem::with_id(app, "regen", "导出配置到文件", true, None::<&str>)?;
     let outdir = MenuItem::with_id(app, "outdir", "打开配置目录", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
     let quit_label = if platform::is_macos() {

@@ -3,10 +3,10 @@
 //!
 //! 用真实的 UU 远程控制面域名做例子，方便用户对照自己生成的结果。
 
-use relaybridge_core::adapters::cvr::ClashVergeRev;
-use relaybridge_core::adapters::{Adapter, RenderInput};
-use relaybridge_core::compiler;
-use relaybridge_core::model::{Action, Match, Project, Rule};
+use uurelaybridge_core::adapters::cvr::ClashVergeRev;
+use uurelaybridge_core::adapters::{Adapter, RenderInput};
+use uurelaybridge_core::compiler;
+use uurelaybridge_core::model::{Action, Match, Project, Rule};
 
 fn main() {
     let project = Project {

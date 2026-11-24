@@ -4,6 +4,7 @@
 //! 所有写操作必须由用户显式授权。
 
 pub mod commands;
+pub mod hostmode;
 pub mod platform;
 pub mod selftest;
 pub mod state;
@@ -17,24 +18,33 @@ use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 /// Windows: %APPDATA%\RelayBridge
 /// macOS:   ~/Library/Application Support/RelayBridge
 ///
-/// 可用环境变量 RELAYBRIDGE_DATA_DIR 覆盖（便携模式 / 自动化测试用）。
-fn data_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    if let Ok(custom) = std::env::var("RELAYBRIDGE_DATA_DIR") {
-        let t = custom.trim();
-        if !t.is_empty() {
-            return Ok(PathBuf::from(t));
+/// 可用环境变量 UURELAYBRIDGE_DATA_DIR 覆盖（便携模式 / 自动化测试用）。
+pub fn env_opt(names: &[&str]) -> Option<String> {
+    for n in names {
+        if let Ok(v) = std::env::var(n) {
+            let t = v.trim().to_string();
+            if !t.is_empty() {
+                return Some(t);
+            }
         }
+    }
+    None
+}
+
+fn data_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Some(t) = env_opt(&["UURELAYBRIDGE_DATA_DIR", "RELAYBRIDGE_DATA_DIR"]) {
+        return Ok(PathBuf::from(t));
     }
     let base = app
         .path()
         .data_dir()
         .map_err(|e| format!("无法获取应用数据目录：{}", e))?;
-    Ok(base.join("RelayBridge"))
+    Ok(base.join("UURelayBridge"))
 }
 
 /// 极简的文件日志：GUI 程序没有控制台，启动期出错必须留下痕迹。
 fn log_line(msg: &str) {
-    if let Ok(path) = std::env::var("RELAYBRIDGE_LOG_FILE") {
+    if let Some(path) = env_opt(&["UURELAYBRIDGE_LOG_FILE", "RELAYBRIDGE_LOG_FILE"]) {
         let t = path.trim();
         if !t.is_empty() {
             use std::io::Write;
@@ -122,7 +132,7 @@ fn show_error_dialog(message: &str) {
         OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
     }
     let text = wide(message);
-    let caption = wide("RelayBridge 启动失败");
+    let caption = wide("UURelayBridge 启动失败");
     // MB_ICONERROR | MB_TOPMOST
     unsafe {
         MessageBoxW(
@@ -153,7 +163,7 @@ fn show_error_dialog(message: &str) {
 /// 这样能先准备好 WebView2 数据目录，避免首次启动 Access denied。
 fn create_main_window(app: &tauri::AppHandle, start_hidden: bool) -> tauri::Result<()> {
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-        .title("RelayBridge")
+        .title("UURelayBridge")
         .inner_size(1080.0, 780.0)
         .min_inner_size(920.0, 640.0)
         .center()
@@ -162,10 +172,7 @@ fn create_main_window(app: &tauri::AppHandle, start_hidden: bool) -> tauri::Resu
         .decorations(true);
 
     // 便携 / 测试用的显式覆盖优先，其次是默认的本地数据目录，最后是临时目录
-    let override_dir = std::env::var("RELAYBRIDGE_WEBVIEW_DIR")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    let override_dir = env_opt(&["UURELAYBRIDGE_WEBVIEW_DIR", "RELAYBRIDGE_WEBVIEW_DIR"])
         .map(PathBuf::from);
 
     match override_dir.or_else(|| webview_data_dir(app)) {
@@ -181,7 +188,7 @@ fn create_main_window(app: &tauri::AppHandle, start_hidden: bool) -> tauri::Resu
     }
 
     // 排障钩子：给 WebView2 传额外的浏览器参数（例如 --remote-debugging-port=9333）
-    if let Ok(args) = std::env::var("RELAYBRIDGE_WEBVIEW_ARGS") {
+    if let Some(args) = env_opt(&["UURELAYBRIDGE_WEBVIEW_ARGS", "RELAYBRIDGE_WEBVIEW_ARGS"]) {
         let t = args.trim();
         if !t.is_empty() {
             builder = builder.additional_browser_args(t);
@@ -245,6 +252,21 @@ const LAYOUT_PROBE_JS: &str = r#"
     bodyBg: getComputedStyle(document.body).backgroundColor,
     codeBg: getComputedStyle(document.documentElement).getPropertyValue('--code-bg').trim(),
     sheets: Array.prototype.map.call(document.styleSheets, function (s) { return s.href || 'inline'; }),
+    resize: (function () {
+      var before = getComputedStyle(document.documentElement).getPropertyValue('--logbar-h').trim();
+      var handle = document.getElementById('logResize');
+      try {
+        handle.dispatchEvent(new PointerEvent('pointerdown', { clientY: 600, pointerId: 1, bubbles: true }));
+        handle.dispatchEvent(new PointerEvent('pointermove', { clientY: 480, pointerId: 1, bubbles: true }));
+        handle.dispatchEvent(new PointerEvent('pointerup', { clientY: 480, pointerId: 1, bubbles: true }));
+      } catch (e) { return { error: String(e) }; }
+      return {
+        before: before,
+        after: getComputedStyle(document.documentElement).getPropertyValue('--logbar-h').trim(),
+        barH: Math.round(document.querySelector('.logbar').getBoundingClientRect().height)
+      };
+    })(),
+    hostPage: { fields: document.querySelectorAll('#page-host input, #page-host textarea, #page-host select').length },
     logbarParent: document.querySelector('.logbar') ? document.querySelector('.logbar').parentElement.className : null,
     contentParent: document.querySelector('.content') ? document.querySelector('.content').parentElement.className : null,
     appKids: Array.prototype.map.call(document.querySelector('.app').children, function (e) {
@@ -263,6 +285,13 @@ pub fn run() {
             commands::bootstrap,
             commands::get_logs,
             commands::frontend_log,
+            commands::host_get,
+            commands::host_set_config,
+            commands::host_start,
+            commands::host_stop,
+            commands::host_apply_hosts,
+            commands::host_clear_hosts,
+            commands::host_open_help,
             commands::clear_logs,
             commands::preview,
             commands::set_enabled,
@@ -314,7 +343,7 @@ pub fn run() {
                          2) 该目录权限异常，或磁盘已满。\n\n\
                          处理建议：\n\
                          • 用安装包安装，或把 RelayBridge.exe 移到可写目录（例如 %LOCALAPPDATA%\\Programs\\RelayBridge）后再运行；\n\
-                         • 或设置环境变量 RELAYBRIDGE_WEBVIEW_DIR 指向一个可写目录；\n\
+                         • 或设置环境变量 UURELAYBRIDGE_WEBVIEW_DIR 指向一个可写目录；\n\
                          • 仍然失败时，安装 Microsoft Edge WebView2 Runtime 后重试。"
                     ),
                 );
@@ -327,7 +356,7 @@ pub fn run() {
             commands::apply_window_theme(&handle, &handle.state::<state::Runtime>().settings().theme);
 
             // 排障钩子：把首屏真实布局回写到日志（只在该环境变量存在时执行）
-            if std::env::var("RELAYBRIDGE_DUMP_LAYOUT").is_ok() {
+            if env_opt(&["UURELAYBRIDGE_DUMP_LAYOUT", "RELAYBRIDGE_DUMP_LAYOUT"]).is_some() {
                 if let Some(w) = handle.get_webview_window("main") {
                     std::thread::spawn(move || {
                         std::thread::sleep(std::time::Duration::from_millis(2500));
@@ -358,10 +387,54 @@ pub fn run() {
                 });
             }
 
+            // Host 模式端到端自检：--host-selftest <端口> <域名>
+            // 启动本地转发 20 秒后退出，供外部脚本验证"解析 SNI → DNS 查真实 IP → 分片转发"。
+            if let Some(pos) = std::env::args().position(|a| a == "--host-selftest") {
+                let port: u16 = std::env::args()
+                    .nth(pos + 1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(18443);
+                let domain = std::env::args()
+                    .nth(pos + 2)
+                    .unwrap_or_else(|| "example.com".to_string());
+                let h_log = handle.clone();
+                let h_main = handle.clone();
+                std::thread::spawn(move || {
+                    let mut cfg = hostmode::HostConfig::default();
+                    cfg.enabled = true;
+                    cfg.listen_port = port;
+                    cfg.domains = vec![domain.clone()];
+                    cfg.fragment_mode = "record".to_string();
+                    cfg.fragment_parts = 4;
+                    let logger: std::sync::Arc<dyn Fn(&str) + Send + Sync> =
+                        std::sync::Arc::new(move |m: &str| {
+                            if let Some(rt) = h_log.try_state::<state::Runtime>() {
+                                rt.log("info", "host", m);
+                            }
+                        });
+                    match hostmode::start(cfg, logger) {
+                        Ok(a) => commands::log(
+                            &h_main,
+                            "ok",
+                            "host",
+                            format!("selftest 转发已启动：{a}"),
+                        ),
+                        Err(e) => commands::log(
+                            &h_main,
+                            "error",
+                            "host",
+                            format!("selftest 转发启动失败：{e}"),
+                        ),
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(20));
+                    std::process::exit(0);
+                });
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("RelayBridge 初始化失败");
+        .expect("UURelayBridge 初始化失败");
 
     app.run(|handle, event| match event {
         RunEvent::ExitRequested { api, .. } => {

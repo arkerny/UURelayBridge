@@ -388,6 +388,7 @@ table.rules tr:hover td { background: var(--panel-2); }
 
 /* ---------- log ---------- */
 .logbar {
+  position: relative;
   border-top: 1px solid var(--line-soft);
   background: var(--code-bg);
   display: flex;
@@ -395,6 +396,29 @@ table.rules tr:hover td { background: var(--panel-2); }
   min-height: 0;
   overflow: hidden;               /* 让滚动条只出现在 .log 里，而不是被窗口裁掉 */
 }
+
+/* 拖拽条：贴在日志栏上边缘，拖动改 --logbar-h */
+.log-resize {
+  position: absolute;
+  top: -4px; left: 0; right: 0;
+  height: 9px;
+  cursor: row-resize;
+  z-index: 6;
+}
+.log-resize::after {
+  content: "";
+  position: absolute;
+  left: 50%; top: 4px;
+  width: 44px; height: 3px;
+  transform: translateX(-50%);
+  border-radius: 3px;
+  background: var(--line);
+  transition: background .15s;
+}
+.log-resize:hover::after,
+.log-resize.active::after { background: var(--accent); }
+body.resizing { cursor: row-resize; }
+body.resizing * { user-select: none !important; }
 .logbar-head {
   flex: 0 0 34px;
   display: flex; align-items: center; justify-content: space-between;
