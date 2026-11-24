@@ -1,9 +1,9 @@
-//! Host 模式：本地 TLS 转发 + 分片。
+//! 本地服务：SOCKS5（Clash 模式）与 80/443 监听（Host 模式）。
 //!
-//! 链路：应用 → hosts 把域名指向 127.0.0.1 → 本模块的监听端口 → 解析 ClientHello、
-//! 取出 SNI → 用 DNS 查真实 IP（绕过被改写的 hosts）→ 分片转发 → 之后双向透传。
+//! - Clash 模式：本机起 SOCKS5，Clash 把目标域名交给它；TLS ClientHello 在这里分片。
+//! - Host 模式：监听 127.0.0.1:443（TLS，分片）与 :80（HTTP，按 Host 头直连）。
 //!
-//! 注意：这里只做"读一条记录、按域名选择是否分片"，不终止 TLS、不替换证书。
+//! 两种模式共用同一套"读 ClientHello → 查真实 IP → 分片 → 透传"逻辑。
 
 pub mod elevate;
 
@@ -18,35 +18,17 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-pub fn config_path(root: &Path) -> PathBuf {
-    root.join("hostmode.json")
+fn d_true() -> bool {
+    true
 }
-
-pub fn load_config(root: &Path) -> HostConfig {
-    let mut cfg: HostConfig = std::fs::read_to_string(config_path(root))
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default();
-    cfg.sanitize();
-    cfg
-}
-
-pub fn save_config(root: &Path, cfg: &HostConfig) -> std::io::Result<()> {
-    std::fs::write(
-        config_path(root),
-        serde_json::to_string_pretty(cfg).unwrap_or_default(),
-    )
-}
-
-/// 给前端的一份完整视图：配置 + 运行状态。
-#[derive(Debug, Clone, Serialize)]
-pub struct HostView {
-    pub config: HostConfig,
-    pub status: HostStatus,
-}
-
 fn d_port() -> u16 {
     443
+}
+fn d_http_port() -> u16 {
+    80
+}
+fn d_socks_port() -> u16 {
+    7899
 }
 fn d_mode() -> String {
     "record".to_string()
@@ -57,27 +39,29 @@ fn d_parts() -> u8 {
 fn d_dns() -> String {
     "223.5.5.5".to_string()
 }
-fn d_true() -> bool {
-    true
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostConfig {
     #[serde(default)]
     pub enabled: bool,
+    /// Host 模式：TLS 监听端口（默认 443）
     #[serde(default = "d_port")]
     pub listen_port: u16,
-    /// 需要走分片的域名（后缀匹配，写 `nrd.nie.163.com` 即覆盖所有子域）
+    /// Host 模式：HTTP 监听端口（默认 80，0 = 不监听）
+    #[serde(default = "d_http_port")]
+    pub http_port: u16,
+    /// Clash 模式：本地 SOCKS5 端口
+    #[serde(default = "d_socks_port")]
+    pub socks_port: u16,
     #[serde(default)]
     pub domains: Vec<String>,
-    /// record = TLS Record 分片；segment = TCP 分段；off = 只转发不分片
     #[serde(default = "d_mode")]
     pub fragment_mode: String,
     #[serde(default = "d_parts")]
     pub fragment_parts: u8,
     #[serde(default = "d_dns")]
     pub dns_server: String,
-    /// 是否把同一份域名/参数同时写进 Clash 脚本（dns.hosts + DIRECT 交给本机转发器）
+    /// 是否把同一份域名/参数写进 Clash 脚本
     #[serde(default = "d_true")]
     pub link_clash: bool,
 }
@@ -87,7 +71,8 @@ impl Default for HostConfig {
         Self {
             enabled: false,
             listen_port: d_port(),
-            // 预置 UU 远程的六个端点，开箱即可启动
+            http_port: d_http_port(),
+            socks_port: d_socks_port(),
             domains: uurelaybridge_core::presets::uu_endpoints(),
             fragment_mode: d_mode(),
             fragment_parts: d_parts(),
@@ -99,9 +84,6 @@ impl Default for HostConfig {
 
 impl HostConfig {
     pub fn sanitize(&mut self) {
-        if self.listen_port < 1024 && self.listen_port != 443 {
-            // 允许 443（Windows 上普通用户也能绑），其余低位端口容易失败但不强改
-        }
         if self.fragment_parts < 2 {
             self.fragment_parts = 2;
         }
@@ -113,6 +95,9 @@ impl HostConfig {
         }
         if self.dns_server.trim().is_empty() {
             self.dns_server = d_dns();
+        }
+        if self.socks_port == 0 {
+            self.socks_port = d_socks_port();
         }
         self.domains = self
             .domains
@@ -141,10 +126,11 @@ pub struct Stats {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct HostStatus {
+pub struct ServiceStatus {
     pub running: bool,
-    pub listen: Option<String>,
-    pub started_at: Option<String>,
+    pub socks: Option<String>,
+    pub https: Option<String>,
+    pub http: Option<String>,
     pub last_error: Option<String>,
     pub hosts_applied: bool,
     pub hosts_domains: Vec<String>,
@@ -156,11 +142,31 @@ pub struct HostStatus {
     pub bytes_down: u64,
 }
 
+impl ServiceStatus {
+    pub fn view(&self) -> String {
+        if !self.running {
+            "未启动".to_string()
+        } else if let Some(s) = &self.socks {
+            format!("SOCKS {s}")
+        } else {
+            [
+                self.https.as_ref().map(|a| format!("TLS {a}")),
+                self.http.as_ref().map(|a| format!("HTTP {a}")),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ")
+        }
+    }
+}
+
 #[derive(Default)]
 struct Inner {
     stop: Option<Arc<AtomicBool>>,
-    listen: Option<String>,
-    started_at: Option<String>,
+    socks: Option<String>,
+    https: Option<String>,
+    http: Option<String>,
     last_error: Option<String>,
     stats: Arc<Stats>,
 }
@@ -172,15 +178,16 @@ fn inner() -> &'static Mutex<Inner> {
 
 type Logger = Arc<dyn Fn(&str) + Send + Sync>;
 
-pub fn status() -> HostStatus {
+pub fn status() -> ServiceStatus {
     let g = match inner().lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
     };
-    HostStatus {
+    ServiceStatus {
         running: g.stop.is_some(),
-        listen: g.listen.clone(),
-        started_at: g.started_at.clone(),
+        socks: g.socks.clone(),
+        https: g.https.clone(),
+        http: g.http.clone(),
         last_error: g.last_error.clone(),
         hosts_applied: hosts::is_applied(),
         hosts_domains: hosts::current_domains(),
@@ -200,52 +207,145 @@ pub fn can_write_hosts() -> bool {
         .is_ok()
 }
 
-/// 启动监听。返回实际监听地址。
-pub fn start(cfg: HostConfig, log: Logger) -> Result<String, String> {
+pub fn config_path(root: &Path) -> PathBuf {
+    root.join("hostmode.json")
+}
+
+pub fn load_config(root: &Path) -> HostConfig {
+    let mut cfg: HostConfig = std::fs::read_to_string(config_path(root))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    cfg.sanitize();
+    cfg
+}
+
+pub fn save_config(root: &Path, cfg: &HostConfig) -> std::io::Result<()> {
+    std::fs::write(
+        config_path(root),
+        serde_json::to_string_pretty(cfg).unwrap_or_default(),
+    )
+}
+
+pub fn stop() {
     let mut g = match inner().lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
     };
-    if g.stop.is_some() {
-        return Err("Host 模式已经在运行".to_string());
+    if let Some(s) = g.stop.take() {
+        s.store(true, Ordering::SeqCst);
     }
+    g.socks = None;
+    g.https = None;
+    g.http = None;
+}
 
-    let addr = format!("127.0.0.1:{}", cfg.listen_port);
-    let listener = TcpListener::bind(&addr).map_err(|e| {
-        let hint = if e.kind() == std::io::ErrorKind::PermissionDenied {
-            "（该端口需要管理员权限，换 8443 或提权运行）"
-        } else if e.kind() == std::io::ErrorKind::AddrInUse {
-            "（端口被占用：可能已有实例在跑，或被其他程序占用）"
-        } else {
-            ""
-        };
-        format!("监听 {addr} 失败{hint}：{e}")
-    })?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| format!("设置非阻塞失败：{e}"))?;
+/// 启动服务。`mode` = "clash"（SOCKS）或 "host"（80/443 监听）。
+pub fn start(mode: &str, cfg: HostConfig, log: Logger) -> Result<ServiceStatus, String> {
+    stop();
 
-    let stop = Arc::new(AtomicBool::new(false));
+    let mut g = match inner().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    let stop_flag = Arc::new(AtomicBool::new(false));
     let stats = g.stats.clone();
     let cfg = Arc::new(cfg);
-    let stop_thread = stop.clone();
-    let addr_log = addr.clone();
 
+    let mut socks = None;
+    let mut https = None;
+    let mut http = None;
+
+    if mode == "clash" {
+        let addr = format!("127.0.0.1:{}", cfg.socks_port);
+        let listener = TcpListener::bind(&addr).map_err(|e| bind_hint(&addr, e))?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|e| format!("设置非阻塞失败：{e}"))?;
+        spawn_acceptor(listener, stop_flag.clone(), cfg.clone(), stats.clone(), log.clone(), Kind::Socks);
+        socks = Some(addr);
+        log(&format!("SOCKS5 已监听 {socks:?}"));
+    } else {
+        let a = format!("127.0.0.1:{}", cfg.listen_port);
+        match TcpListener::bind(&a) {
+            Ok(l) => {
+                l.set_nonblocking(true).ok();
+                spawn_acceptor(l, stop_flag.clone(), cfg.clone(), stats.clone(), log.clone(), Kind::Https);
+                https = Some(a.clone());
+                log(&format!("TLS 转发已监听 {a}"));
+            }
+            Err(e) => {
+                let msg = bind_hint(&a, e);
+                g.last_error = Some(msg.clone());
+                return Err(msg);
+            }
+        }
+        if cfg.http_port > 0 {
+            let h = format!("127.0.0.1:{}", cfg.http_port);
+            match TcpListener::bind(&h) {
+                Ok(l) => {
+                    l.set_nonblocking(true).ok();
+                    spawn_acceptor(l, stop_flag.clone(), cfg.clone(), stats.clone(), log.clone(), Kind::Http);
+                    http = Some(h.clone());
+                    log(&format!("HTTP 转发已监听 {h}"));
+                }
+                Err(e) => log(&format!("HTTP 端口 {h} 未监听：{e}")),
+            }
+        }
+    }
+
+    g.stop = Some(stop_flag);
+    g.socks = socks.clone();
+    g.https = https.clone();
+    g.http = http.clone();
+    g.last_error = None;
+    Ok(status())
+}
+
+fn bind_hint(addr: &str, e: std::io::Error) -> String {
+    let hint = if e.kind() == std::io::ErrorKind::PermissionDenied {
+        "（该端口需要管理员权限）"
+    } else if e.kind() == std::io::ErrorKind::AddrInUse {
+        "（端口被占用，可能已有实例在运行）"
+    } else {
+        ""
+    };
+    format!("监听 {addr} 失败{hint}：{e}")
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Socks,
+    Https,
+    Http,
+}
+
+fn spawn_acceptor(
+    listener: TcpListener,
+    stop: Arc<AtomicBool>,
+    cfg: Arc<HostConfig>,
+    stats: Arc<Stats>,
+    log: Logger,
+    kind: Kind,
+) {
     std::thread::spawn(move || {
-        log(&format!("Host 模式已监听 {addr_log}"));
-        while !stop_thread.load(Ordering::SeqCst) {
+        while !stop.load(Ordering::SeqCst) {
             match listener.accept() {
                 Ok((stream, peer)) => {
                     stats.conns.fetch_add(1, Ordering::Relaxed);
-                    // Windows 上 accept 出来的 socket 可能继承监听套接字的非阻塞状态
                     let _ = stream.set_nonblocking(false);
                     let cfg = cfg.clone();
                     let stats = stats.clone();
                     let log = log.clone();
                     std::thread::spawn(move || {
-                        if let Err(e) = handle_conn(stream, &cfg, stats.clone(), &log) {
+                        let r = match kind {
+                            Kind::Socks => socks_conn(stream, &cfg, stats.clone(), &log),
+                            Kind::Https => https_conn(stream, &cfg, stats.clone(), &log),
+                            Kind::Http => http_conn(stream, &cfg, stats.clone(), &log),
+                        };
+                        if let Err(e) = r {
                             stats.failed.fetch_add(1, Ordering::Relaxed);
-                            log(&format!("连接 {} 处理失败：{e}", peer));
+                            log(&format!("{peer} 处理失败：{e}"));
                         }
                     });
                 }
@@ -258,40 +358,20 @@ pub fn start(cfg: HostConfig, log: Logger) -> Result<String, String> {
                 }
             }
         }
-        log("Host 模式已停止监听");
     });
-
-    g.stop = Some(stop);
-    g.listen = Some(addr.clone());
-    g.started_at = Some(crate::state::now_rfc3339());
-    g.last_error = None;
-    Ok(addr)
 }
 
-pub fn stop() {
-    let mut g = match inner().lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    };
-    if let Some(s) = g.stop.take() {
-        s.store(true, Ordering::SeqCst);
-    }
-    g.listen = None;
-    g.started_at = None;
-}
+// ---------------------------------------------------------------- 三种入口
 
-fn handle_conn(
+fn https_conn(
     mut client: TcpStream,
     cfg: &HostConfig,
     stats: Arc<Stats>,
     log: &Logger,
 ) -> Result<(), String> {
-    client
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .ok();
+    client.set_read_timeout(Some(Duration::from_secs(10))).ok();
     let _ = client.set_nodelay(true);
 
-    // 1) 读一条完整的 TLS 记录（可能跨多次 read）
     let mut hdr = [0u8; 5];
     match client.read_exact(&mut hdr) {
         Ok(()) => {}
@@ -303,13 +383,12 @@ fn handle_conn(
                     | std::io::ErrorKind::ConnectionAborted
             ) =>
         {
-            // 探测连接 / 客户端提前关闭，属正常现象
             return Ok(());
         }
         Err(e) => return Err(format!("读取记录头失败：{e}")),
     }
     if hdr[0] != 0x16 {
-        log(&format!("非 TLS 握手（首字节 0x{:02x}），直接断开", hdr[0]));
+        log(&format!("非 TLS 握手（首字节 0x{:02x}），断开", hdr[0]));
         return Ok(());
     }
     let len = u16::from_be_bytes([hdr[3], hdr[4]]) as usize;
@@ -323,45 +402,176 @@ fn handle_conn(
     let mut record = hdr.to_vec();
     record.extend_from_slice(&body);
 
-    // 2) 取 SNI
     let Some(sni) = tls::parse_sni(&record) else {
-        log("没有解析出 SNI，直接断开");
+        log("没有解析出 SNI，断开");
         return Ok(());
     };
+    relay(client, &record, &sni, 443, cfg, stats, log)
+}
 
-    // 3) 查真实地址（绕过 hosts）。多个 DNS 并行问，取最先成功的。
-    let t_dns = std::time::Instant::now();
-    let target = resolve_fast(&sni, &cfg.dns_server);
-    let dns_ms = t_dns.elapsed().as_millis();
-    let Some(ip) = target else {
-        return Err(format!("{sni} 解析失败（DNS 未返回 A 记录）"));
+fn socks_conn(
+    mut client: TcpStream,
+    cfg: &HostConfig,
+    stats: Arc<Stats>,
+    log: &Logger,
+) -> Result<(), String> {
+    client.set_read_timeout(Some(Duration::from_secs(15))).ok();
+    let _ = client.set_nodelay(true);
+
+    // 1) 握手：05 NMETHODS METHODS...
+    let mut head = [0u8; 2];
+    client
+        .read_exact(&mut head)
+        .map_err(|e| format!("SOCKS 握手读取失败：{e}"))?;
+    if head[0] != 0x05 {
+        return Err("不是 SOCKS5".to_string());
+    }
+    let mut methods = vec![0u8; head[1] as usize];
+    client
+        .read_exact(&mut methods)
+        .map_err(|e| format!("SOCKS 方法读取失败：{e}"))?;
+    client
+        .write_all(&[0x05, 0x00])
+        .map_err(|e| format!("SOCKS 握手回复失败：{e}"))?;
+
+    // 2) 请求：05 CMD RSV ATYP ADDR PORT
+    let mut req = [0u8; 4];
+    client
+        .read_exact(&mut req)
+        .map_err(|e| format!("SOCKS 请求读取失败：{e}"))?;
+    if req[1] != 0x01 {
+        let _ = client.write_all(&[0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
+        return Err("仅支持 CONNECT".to_string());
+    }
+    let host = match req[3] {
+        0x01 => {
+            let mut a = [0u8; 4];
+            client.read_exact(&mut a).map_err(|e| e.to_string())?;
+            IpAddr::from(a).to_string()
+        }
+        0x03 => {
+            let mut l = [0u8; 1];
+            client.read_exact(&mut l).map_err(|e| e.to_string())?;
+            let mut name = vec![0u8; l[0] as usize];
+            client.read_exact(&mut name).map_err(|e| e.to_string())?;
+            String::from_utf8_lossy(&name).to_string()
+        }
+        0x04 => {
+            let mut a = [0u8; 16];
+            client.read_exact(&mut a).map_err(|e| e.to_string())?;
+            IpAddr::from(a).to_string()
+        }
+        other => return Err(format!("未知地址类型 {other}")),
     };
+    let mut port_b = [0u8; 2];
+    client.read_exact(&mut port_b).map_err(|e| e.to_string())?;
+    let port = u16::from_be_bytes(port_b);
 
-    // 4) 连接真实服务器
-    let addr = SocketAddr::new(ip, 443);
-    let t_conn = std::time::Instant::now();
-    let mut remote = TcpStream::connect_timeout(&addr, Duration::from_secs(6))
-        .map_err(|e| format!("连接 {sni}（{ip}）失败：{e}"))?;
-    let conn_ms = t_conn.elapsed().as_millis();
+    // 3) 成功回复（0.0.0.0:0）
+    client
+        .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+        .map_err(|e| format!("SOCKS 回复失败：{e}"))?;
+
+    // 4) 读第一条 TLS 记录用于判断是否分片
+    let mut hdr = [0u8; 5];
+    client
+        .read_exact(&mut hdr)
+        .map_err(|e| format!("读取记录头失败：{e}"))?;
+    if hdr[0] != 0x16 {
+        return Err(format!("SOCKS 目标不是 TLS（首字节 0x{:02x}）", hdr[0]));
+    }
+    let len = u16::from_be_bytes([hdr[3], hdr[4]]) as usize;
+    if len == 0 || len > 16384 {
+        return Err(format!("记录长度异常：{len}"));
+    }
+    let mut body = vec![0u8; len];
+    client
+        .read_exact(&mut body)
+        .map_err(|e| format!("读取记录体失败：{e}"))?;
+    let mut record = hdr.to_vec();
+    record.extend_from_slice(&body);
+
+    let sni = tls::parse_sni(&record).unwrap_or_else(|| host.clone());
+    relay(client, &record, &sni, port, cfg, stats, log)
+}
+
+fn http_conn(
+    mut client: TcpStream,
+    cfg: &HostConfig,
+    stats: Arc<Stats>,
+    log: &Logger,
+) -> Result<(), String> {
+    client.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 4096];
+    loop {
+        let n = client
+            .read(&mut tmp)
+            .map_err(|e| format!("读取 HTTP 请求失败：{e}"))?;
+        if n == 0 {
+            return Ok(());
+        }
+        buf.extend_from_slice(&tmp[..n]);
+        if buf.windows(4).any(|w| w == b"\r\n\r\n") || buf.len() > 16384 {
+            break;
+        }
+    }
+    let text = String::from_utf8_lossy(&buf);
+    let host = text
+        .lines()
+        .find_map(|l| {
+            let lower = l.to_ascii_lowercase();
+            lower.strip_prefix("host:").map(|v| v.trim().to_string())
+        })
+        .ok_or_else(|| "HTTP 请求没有 Host 头".to_string())?;
+    let host = host.split(':').next().unwrap_or(&host).to_string();
+
+    let ip = resolve_fast(&host, &cfg.dns_server).ok_or_else(|| format!("{host} 解析失败"))?;
+    let mut remote = TcpStream::connect_timeout(
+        &SocketAddr::new(ip, 80),
+        Duration::from_secs(6),
+    )
+    .map_err(|e| format!("连接 {host} 失败：{e}"))?;
+    remote
+        .write_all(&buf)
+        .map_err(|e| format!("转发 HTTP 请求失败：{e}"))?;
+    log(&format!("{host} → {ip}:80（HTTP 直连）"));
+    pump(client, remote, stats)
+}
+
+fn relay(
+    client: TcpStream,
+    record: &[u8],
+    host: &str,
+    port: u16,
+    cfg: &HostConfig,
+    stats: Arc<Stats>,
+    log: &Logger,
+) -> Result<(), String> {
+    let ip = resolve_fast(host, &cfg.dns_server)
+        .ok_or_else(|| format!("{host} 解析失败（DNS 未返回 A 记录）"))?;
+    let mut remote = TcpStream::connect_timeout(
+        &SocketAddr::new(ip, port),
+        Duration::from_secs(6),
+    )
+    .map_err(|e| format!("连接 {host}（{ip}）失败：{e}"))?;
     let _ = remote.set_nodelay(true);
 
-    // 5) 按配置分片发出 ClientHello
-    let matched = cfg.matches(&sni);
+    let matched = cfg.matches(host);
     let fragmented = matched && cfg.fragment_mode != "off";
     if fragmented && cfg.fragment_mode == "record" {
-        let parts = tls::split_record(&record, cfg.fragment_parts as usize);
+        let parts = tls::split_record(record, cfg.fragment_parts as usize);
         for p in &parts {
             remote
                 .write_all(p)
                 .map_err(|e| format!("发送分片失败：{e}"))?;
         }
         log(&format!(
-            "{sni} → {ip}（TLS Record 分片 {} 段，共 {} 字节；DNS {dns_ms}ms，连接 {conn_ms}ms）",
-            parts.len(),
-            record.len()
+            "{host} → {ip}（TLS Record 分片 {} 段）",
+            parts.len()
         ));
     } else if fragmented {
-        let parts = tls::segment_chunks(&record, cfg.fragment_parts as usize);
+        let parts = tls::segment_chunks(record, cfg.fragment_parts as usize);
         for (i, p) in parts.iter().enumerate() {
             remote
                 .write_all(p)
@@ -370,39 +580,21 @@ fn handle_conn(
                 std::thread::sleep(Duration::from_millis(4));
             }
         }
-        log(&format!(
-            "{sni} → {ip}（TCP 分段 {} 段，共 {} 字节）",
-            parts.len(),
-            record.len()
-        ));
+        log(&format!("{host} → {ip}（TCP 分段 {} 段）", parts.len()));
     } else {
         remote
-            .write_all(&record)
+            .write_all(record)
             .map_err(|e| format!("转发 ClientHello 失败：{e}"))?;
         if matched {
-            log(&format!("{sni} → {ip}（未分片）"));
+            log(&format!("{host} → {ip}（未分片）"));
         }
     }
     if fragmented {
         stats.fragmented.fetch_add(1, Ordering::Relaxed);
     }
-
-    // 6) 双向透传
     pump(client, remote, stats)
 }
 
-fn resolver_candidates(preferred: &str) -> Vec<String> {
-    let mut v = vec![preferred.trim().to_string()];
-    for s in ["223.5.5.5", "119.29.29.29"] {
-        if !v.iter().any(|x| x == s) {
-            v.push(s.to_string());
-        }
-    }
-    v.retain(|s| !s.is_empty());
-    v
-}
-
-/// 并行问多个 DNS，取最先返回的结果；全部失败才返回 None。
 fn resolve_fast(host: &str, preferred: &str) -> Option<IpAddr> {
     let servers = resolver_candidates(preferred);
     let (tx, rx) = std::sync::mpsc::channel();
@@ -411,13 +603,11 @@ fn resolve_fast(host: &str, preferred: &str) -> Option<IpAddr> {
         let server = server.clone();
         let tx = tx.clone();
         std::thread::spawn(move || {
-            let r = dns::resolve_any(&host, &server);
-            let _ = tx.send(r);
+            let _ = tx.send(dns::resolve_any(&host, &server));
         });
     }
     drop(tx);
-
-    let deadline = std::time::Instant::now() + Duration::from_millis(2500);
+    let deadline = std::time::Instant::now() + Duration::from_millis(3500);
     loop {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         if left.is_zero() {
@@ -429,6 +619,20 @@ fn resolve_fast(host: &str, preferred: &str) -> Option<IpAddr> {
             Err(_) => return None,
         }
     }
+}
+
+fn resolver_candidates(preferred: &str) -> Vec<String> {
+    let mut v = vec![preferred.trim().to_string()];
+    if dns::is_doh(preferred) {
+        return v;
+    }
+    for s in ["223.5.5.5", "119.29.29.29"] {
+        if !v.iter().any(|x| x == s) {
+            v.push(s.to_string());
+        }
+    }
+    v.retain(|s| !s.is_empty());
+    v
 }
 
 fn pump(mut client: TcpStream, remote: TcpStream, stats: Arc<Stats>) -> Result<(), String> {

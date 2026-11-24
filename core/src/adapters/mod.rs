@@ -17,6 +17,9 @@ pub struct SniLink {
     pub domains: Vec<String>,
     pub mode: String,
     pub parts: u8,
+    /// 有值 = Clash 走本机 SOCKS5（推荐）；None = 旧方案，用 dns.hosts 指到本机 443。
+    pub socks_port: Option<u16>,
+    pub socks_name: String,
 }
 
 /// 渲染所需的全部输入（全部由调用方算好，适配器不做 IO）。

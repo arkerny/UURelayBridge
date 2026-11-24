@@ -272,7 +272,7 @@ const LAYOUT_PROBE_JS: &str = r#"
     ui: { bodyClass: document.body.className, mode: (document.querySelector(".mode-btn.active") || {}).dataset ? document.querySelector(".mode-btn.active").dataset.mode : null, visibleTabs: Array.prototype.filter.call(document.querySelectorAll(".tab"), function (t) { return !t.hidden; }).map(function (t) { return t.textContent; }) },
     preview: (function () {
       var t = (document.getElementById('previewBox') || {}).textContent || '';
-      return { sni: t.indexOf('RB_SNI_DOMAINS') >= 0, hosts: t.indexOf('hosts[d]') >= 0, len: t.length };
+      return { sni: t.indexOf('RB_SNI_DOMAINS') >= 0, hosts: t.indexOf('hosts[d]') >= 0, socks: t.indexOf('RB_SOCKS_PORT') >= 0, len: t.length };
     })(),
     logbarParent: document.querySelector('.logbar') ? document.querySelector('.logbar').parentElement.className : null,
     contentParent: document.querySelector('.content') ? document.querySelector('.content').parentElement.className : null,
@@ -317,11 +317,10 @@ pub fn run() {
             commands::get_presets,
             commands::host_get,
             commands::host_set_config,
-            commands::host_start,
-            commands::host_stop,
+            commands::service_start,
+            commands::service_stop,
             commands::host_apply_hosts,
             commands::host_clear_hosts,
-            commands::host_open_help,
             commands::clear_logs,
             commands::preview,
             commands::set_mode,
@@ -418,6 +417,44 @@ pub fn run() {
                 });
             }
 
+            // SOCKS 模式自检：--socks-selftest <端口>
+            if let Some(pos) = std::env::args().position(|a| a == "--socks-selftest") {
+                let port: u16 = std::env::args()
+                    .nth(pos + 1)
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(17899);
+                let h_log = handle.clone();
+                let h_main = handle.clone();
+                std::thread::spawn(move || {
+                    let mut cfg = hostmode::HostConfig::default();
+                    cfg.enabled = true;
+                    cfg.socks_port = port;
+                    cfg.fragment_mode = "record".to_string();
+                    cfg.fragment_parts = 4;
+                    let logger: std::sync::Arc<dyn Fn(&str) + Send + Sync> =
+                        std::sync::Arc::new(move |m: &str| {
+                            if let Some(rt) = h_log.try_state::<state::Runtime>() {
+                                rt.log("info", "host", m);
+                            }
+                        });
+                    match hostmode::start("clash", cfg, logger) {
+                        Ok(st) => commands::log(
+                            &h_main,
+                            "ok",
+                            "host",
+                            format!("socks-selftest 已启动：{}", st.view()),
+                        ),
+                        Err(e) => commands::log(
+                            &h_main,
+                            "error",
+                            "host",
+                            format!("socks-selftest 启动失败：{e}"),
+                        ),
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(20));
+                    std::process::exit(0);
+                });
+            }
             // Host 模式端到端自检：--host-selftest <端口> <域名>
             // 启动本地转发 20 秒后退出，供外部脚本验证"解析 SNI → DNS 查真实 IP → 分片转发"。
             if let Some(pos) = std::env::args().position(|a| a == "--host-selftest") {
@@ -443,12 +480,12 @@ pub fn run() {
                                 rt.log("info", "host", m);
                             }
                         });
-                    match hostmode::start(cfg, logger) {
+                    match hostmode::start("host", cfg, logger) {
                         Ok(a) => commands::log(
                             &h_main,
                             "ok",
                             "host",
-                            format!("selftest 转发已启动：{a}"),
+                            format!("selftest 转发已启动：{}", a.view()),
                         ),
                         Err(e) => commands::log(
                             &h_main,

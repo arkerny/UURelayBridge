@@ -629,8 +629,6 @@
 
     // Host 模式
     $("btnHostSave").addEventListener("click", () => guard(saveHostConfig));
-    $("btnHostStart").addEventListener("click", () => guard(startHost));
-    $("btnHostStop").addEventListener("click", () => guard(stopHost));
     $("btnHostApplyHosts").addEventListener("click", () => guard(applyHosts));
     $("btnHostClearHosts").addEventListener("click", () => guard(clearHosts));
     $("hostDomains").addEventListener("change", () => (HOST.dirty = true));
@@ -737,6 +735,7 @@
       $("hostMode").value = c.fragment_mode;
       $("hostParts").value = c.fragment_parts;
       $("hostDns").value = c.dns_server;
+      $("hostSocksPort").value = c.socks_port;
       $("hostDomains").value = (c.domains || []).join("\n");
       $("hostLinkClash").checked = !!c.link_clash;
     }
@@ -750,8 +749,6 @@
     $("hostStats").textContent = `${s.conns} / ${s.fragmented}` +
       (s.failed ? ` · 失败 ${s.failed}` : "") +
       ` · ↑${Math.round(s.bytes_up / 1024)}KB ↓${Math.round(s.bytes_down / 1024)}KB`;
-    $("btnHostStart").disabled = s.running;
-    $("btnHostStop").disabled = !s.running;
     $("btnHostApplyHosts").disabled = s.hosts_applied;
     $("btnHostClearHosts").disabled = !s.hosts_applied;
   }
@@ -765,6 +762,7 @@
       fragment_mode: $("hostMode").value,
       fragment_parts: Math.max(2, Math.min(12, parseInt($("hostParts").value || "4", 10))),
       dns_server: $("hostDns").value.trim() || "223.5.5.5",
+      socks_port: Math.max(1, Math.min(65535, parseInt($("hostSocksPort").value || "7899", 10))),
       link_clash: $("hostLinkClash").checked,
       domains: $("hostDomains").value
         .split("\n")
@@ -786,34 +784,23 @@
   }
 
   async function startHost() {
-    const cfg = hostFormConfig();
-    if (!cfg.domains.length) {
-      toast("请先填写要走分片的域名", "warn");
-      return;
-    }
-    const ok = await confirmDialog(
-      "启动本地转发",
-      `将在 <code>127.0.0.1:${cfg.listen_port}</code> 监听 TLS，并对 ${cfg.domains.length} 个域名做 ${
-        cfg.fragment_mode === "record" ? "TLS Record 分片" : cfg.fragment_mode === "segment" ? "TCP 分段" : "纯转发"
-      }。<br/>不改 hosts、不改系统设置。`
-    );
-    if (!ok) return;
     await guard(async () => {
-      HOST.view = await api("host_set_config", { config: cfg, approved: true });
-      HOST.view = await api("host_start", { approved: true });
+      const snap = await api("service_start", { approved: true });
+      S.snap = snap;
+      HOST.view = await api("host_get");
+      renderAll();
       renderHost();
-      toast("转发已启动");
     });
   }
 
   async function stopHost() {
     await guard(async () => {
-      HOST.view = await api("host_stop");
+      HOST.view = await api("service_stop");
+      S.snap = await api("bootstrap");
+      renderAll();
       renderHost();
-      toast("已停止监听");
     });
   }
-
   async function applyHosts() {
     const cfg = hostFormConfig();
     if (!cfg.domains.length) {

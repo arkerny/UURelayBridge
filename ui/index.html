@@ -17,7 +17,7 @@
 
         <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="使用方式">
           <button class="mode-btn" data-mode="clash">Clash 规则</button>
-          <button class="mode-btn" data-mode="host">本机转发</button>
+          <button class="mode-btn" data-mode="host">Host 模式</button>
         </div>
 
         <div class="top-actions">
@@ -35,7 +35,7 @@
       <nav class="tabs">
         <button class="tab active" data-tab="overview" data-for="clash">概览</button>
         <button class="tab" data-tab="rules" data-for="clash">规则</button>
-        <button class="tab" data-tab="host" data-for="host">本机转发</button>
+        <button class="tab" data-tab="host" data-for="host">Host 模式</button>
         <button class="tab" data-tab="settings" data-for="both">设置</button>
         <div class="tabs-spacer"></div>
         <span class="muted small" id="ruleCounter"></span>
@@ -132,11 +132,9 @@
         <!-- 本机转发 -->
         <section class="page" id="page-host">
           <div class="pane-head">
-            <h2>本机转发</h2>
+            <h2>Host 模式</h2>
             <div class="pane-actions">
               <span class="state-pill" id="hostStatePill"><span class="dot"></span><span id="hostStateText">未启动</span></span>
-              <button class="btn" id="btnHostStart">启动</button>
-              <button class="btn ghost" id="btnHostStop">停止</button>
             </div>
           </div>
 
@@ -166,6 +164,10 @@
                   <label class="row narrow">
                     <span>段数</span>
                     <input id="hostParts" type="number" min="2" max="12" />
+                  </label>
+                  <label class="row narrow">
+                    <span>SOCKS</span>
+                    <input id="hostSocksPort" type="number" min="1" max="65535" />
                   </label>
                 </div>
                 <label class="row">

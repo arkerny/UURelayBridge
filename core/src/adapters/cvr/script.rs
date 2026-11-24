@@ -47,7 +47,7 @@ pub fn render(input: &RenderInput<'_>) -> String {
     if let Some(s) = sni {
         out.push_str(" *\n");
         out.push_str(&format!(
-            " * SNI 联动：{} 个域名 · {} · {} 段\n",
+            " * SNI 处理：{} 个域名 · {} · {} 段\n",
             s.domains.len(),
             match s.mode.as_str() {
                 "segment" => "TCP 分段",
@@ -56,9 +56,13 @@ pub fn render(input: &RenderInput<'_>) -> String {
             },
             s.parts
         ));
-        out.push_str(" * 这些域名会被指到 127.0.0.1，由 UURelayBridge 的 Host 模式做分片转发。\n");
-        out.push_str(" * ⚠ 同一域名若另有代理规则，会被这里的 DIRECT 规则覆盖（分片优先）。\n");
-        out.push_str(" * ⚠ 使用期间必须保持 UURelayBridge 运行、Host 模式转发已启动，否则这些域名会不可用。\n");
+        if let Some(port) = s.socks_port {
+            out.push_str(&format!(
+                " * 走本机 SOCKS5 127.0.0.1:{port}（UURelayBridge 负责分片），需保持 UURelayBridge 运行。\n"
+            ));
+        } else {
+            out.push_str(" * 域名会被指到 127.0.0.1:443，由 UURelayBridge 的 Host 模式做分片转发。\n");
+        }
     }
     out.push_str(" * ========================================================================== */\n\n");
 
@@ -73,8 +77,14 @@ pub fn render(input: &RenderInput<'_>) -> String {
     }
     out.push_str("  ];\n\n");
 
-    // SNI 联动：域名 → 127.0.0.1（本机转发器）+ DIRECT 规则
+    // SNI 联动：域名列表 + 目标（本机 SOCKS5 或 本机 443）
     let sni_domains: Vec<&String> = sni.map(|s| s.domains.iter().collect()).unwrap_or_default();
+    let socks_port = sni.and_then(|s| s.socks_port);
+    let socks_name = sni
+        .map(|s| s.socks_name.clone())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "UURelayBridge-SNI".to_string());
+
     out.push_str(&format!(
         "  var RB_SNI_ENABLED = {};\n",
         !sni_domains.is_empty()
@@ -86,8 +96,13 @@ pub fn render(input: &RenderInput<'_>) -> String {
         out.push_str(",\n");
     }
     out.push_str("  ];\n");
+    out.push_str(&format!("  var RB_SOCKS_PORT = {};\n", match socks_port {
+        Some(p) => p.to_string(),
+        None => "0".to_string(),
+    }));
+    out.push_str(&format!("  var RB_SOCKS_NAME = {};\n", js_string(&socks_name)));
     out.push_str("  var RB_SNI_RULES = RB_SNI_DOMAINS.map(function (d) {\n");
-    out.push_str("    return \"DOMAIN-SUFFIX,\" + d + \",DIRECT\";\n  });\n\n");
+    out.push_str("    return \"DOMAIN-SUFFIX,\" + d + \",\" + (RB_SOCKS_PORT ? RB_SOCKS_NAME : \"DIRECT\");\n  });\n\n");
 
     out.push_str("  if (!config || typeof config !== \"object\") {\n    config = {};\n  }\n");
     out.push_str("  var existing = Array.isArray(config.rules) ? config.rules.slice() : [];\n\n");
@@ -101,20 +116,33 @@ pub fn render(input: &RenderInput<'_>) -> String {
     out.push_str("  // 只动 config.rules；用户其他字段一律不碰\n");
     out.push_str("  config.rules = RB_ENABLED ? ours.concat(kept) : kept;\n\n");
 
-    out.push_str("  // SNI 联动：把域名指到本机转发器；关闭时把上次写入的指回删除\n");
+    out.push_str("  // SNI 联动：SOCKS 模式下注入本机代理；否则把域名指到本机 443\n");
     out.push_str("  try {\n");
     out.push_str("    var wantSni = RB_ENABLED && RB_SNI_ENABLED;\n");
+    out.push_str("    if (RB_SOCKS_PORT > 0) {\n");
+    out.push_str("      var list = Array.isArray(config.proxies) ? config.proxies.slice() : [];\n");
+    out.push_str("      list = list.filter(function (p) { return !p || p.name !== RB_SOCKS_NAME; });\n");
+    out.push_str("      if (wantSni) {\n");
+    out.push_str("        list.push({ name: RB_SOCKS_NAME, type: \"socks5\", server: \"127.0.0.1\", port: RB_SOCKS_PORT, udp: false });\n");
+    out.push_str("      }\n");
+    out.push_str("      config.proxies = list;\n");
+    out.push_str("    }\n");
+    out.push_str("    // 清理旧方案（dns.hosts → 127.0.0.1）留下的记录\n");
     out.push_str("    var dns = config.dns;\n");
     out.push_str("    if (dns && typeof dns === \"object\") {\n");
-    out.push_str("      var hosts = (dns.hosts && typeof dns.hosts === \"object\") ? dns.hosts : {};\n");
-    out.push_str("      for (var k = 0; k < RB_SNI_DOMAINS.length; k++) {\n");
-    out.push_str("        var d = RB_SNI_DOMAINS[k];\n");
-    out.push_str("        if (wantSni) {\n          hosts[d] = \"127.0.0.1\";\n");
-    out.push_str("        } else if (hosts[d] === \"127.0.0.1\") {\n          delete hosts[d];\n        }\n      }\n");
-    out.push_str("      dns.hosts = hosts;\n");
-    out.push_str("      config.dns = dns;\n");
-    out.push_str("    } else if (wantSni && typeof console !== \"undefined\") {\n");
-    out.push_str("      console.warn(\"[UURelayBridge] 配置里没有 dns 段，SNI 联动未生效：请把 SNI 域名手动加进 dns.hosts，或先在 Clash 里启用 DNS。\");\n");
+    out.push_str("      var hosts = (dns.hosts && typeof dns.hosts === \"object\") ? dns.hosts : null;\n");
+    out.push_str("      var legacy = RB_SOCKS_PORT === 0 && wantSni;\n");
+    out.push_str("      if (hosts) {\n");
+    out.push_str("        for (var k = 0; k < RB_SNI_DOMAINS.length; k++) {\n");
+    out.push_str("          var d = RB_SNI_DOMAINS[k];\n");
+    out.push_str("          if (legacy) { hosts[d] = \"127.0.0.1\"; }\n");
+    out.push_str("          else if (hosts[d] === \"127.0.0.1\") { delete hosts[d]; }\n");
+    out.push_str("        }\n");
+    out.push_str("        dns.hosts = hosts;\n");
+    out.push_str("        config.dns = dns;\n");
+    out.push_str("      } else if (legacy && typeof console !== \"undefined\") {\n");
+    out.push_str("        console.warn(\"[UURelayBridge] 没有 dns 段，无法把域名指到本机 443；建议改用 SOCKS 模式。\");\n");
+    out.push_str("      }\n");
     out.push_str("    }\n");
     out.push_str("  } catch (e) { /* 只影响 SNI 联动，不动其它配置 */ }\n\n");
 

@@ -65,6 +65,8 @@ pub struct Snapshot {
     pub validation: Vec<Issue>,
     pub compiled_rules: usize,
     pub manifest: Option<Manifest>,
+    pub service: crate::hostmode::ServiceStatus,
+    pub host_config: crate::hostmode::HostConfig,
     pub backups: Vec<String>,
 }
 
@@ -93,15 +95,18 @@ fn paths_view(rt: &AppRuntime, target: &str) -> PathsView {
     }
 }
 
-/// SNI 联动：Host 模式的域名/参数，转成适配器能用的形式。
-/// Clash 内核没有原生 TLS 分片，所以这里只做「域名 → 本机转发器」。
+/// SNI 联动：把 Host 模式里的域名/参数转成适配器能用的形式。
+/// Clash 模式走本机 SOCKS5；Host 模式才用 dns.hosts 指到 443。
 pub fn sni_link(rt: &AppRuntime) -> adapters::SniLink {
     let h = rt.host_config();
+    let mode = rt.settings().mode;
     adapters::SniLink {
         enabled: h.link_clash && !h.domains.is_empty(),
         domains: h.domains.clone(),
         mode: h.fragment_mode.clone(),
         parts: h.fragment_parts,
+        socks_port: if mode == "host" { None } else { Some(h.socks_port) },
+        socks_name: "UURelayBridge-SNI".to_string(),
     }
 }
 
@@ -165,6 +170,8 @@ fn build_snapshot(rt: &AppRuntime) -> Snapshot {
         validation,
         compiled_rules,
         manifest,
+        service: crate::hostmode::status(),
+        host_config: rt.host_config(),
         backups,
     }
 }
@@ -302,48 +309,6 @@ fn lock_write(rt: &AppRuntime) -> MutexGuard<'_, ()> {
     }
 }
 
-/// 供托盘/命令共用的开关实现（approved 代表"用户已经通过点击或确认框授权"）。
-pub fn apply_enabled(app: &AppHandle, enabled: bool, approved: bool, origin: &str) {
-    let rt = app.state::<AppRuntime>();
-    if !approved {
-        rt.log("warn", origin, "缺少授权，已取消本次修改");
-        return;
-    }
-    let guard = lock_write(&rt);
-    {
-        let mut s = match rt.settings.write() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        s.enabled = enabled;
-    }
-    rt.log(
-        "info",
-        origin,
-        format!(
-            "已授权：{} RelayBridge 规则（只更新生成内容，不写文件）",
-            if enabled { "启用" } else { "停用" }
-        ),
-    );
-    drop(guard);
-    tray::refresh(app);
-    emit_state(app);
-}
-
-pub fn apply_regenerate(app: &AppHandle, approved: bool, origin: &str) {
-    let rt = app.state::<AppRuntime>();
-    if !approved {
-        rt.log("warn", origin, "缺少授权，已取消本次操作");
-        return;
-    }
-    let guard = lock_write(&rt);
-    rt.log("info", origin, "已授权：导出配置到文件");
-    let _ = generate_locked(&rt, origin);
-    drop(guard);
-    tray::refresh(app);
-    emit_state(app);
-}
-
 pub fn open_output_dir_impl(rt: &AppRuntime) -> Result<(), String> {
     let settings = rt.settings();
     let dir = rt.paths.output_dir(&settings.target);
@@ -386,10 +351,15 @@ pub fn toggle_main_window(app: &AppHandle) {
     }
 }
 
-// ---------------------------------------------------------------- Host 模式
+// ---------------------------------------------------------------- 本地服务
 
-use crate::hostmode::{self, HostConfig, HostView};
-use std::sync::Arc;
+use crate::hostmode::{self, HostConfig, ServiceStatus};
+
+#[derive(serde::Serialize)]
+pub struct HostView {
+    pub config: HostConfig,
+    pub status: ServiceStatus,
+}
 
 #[derive(serde::Serialize)]
 pub struct Presets {
@@ -413,42 +383,93 @@ pub fn host_get(rt: State<'_, AppRuntime>) -> HostView {
     }
 }
 
-#[tauri::command]
-pub fn host_set_config(
-    config: HostConfig,
-    approved: bool,
-    rt: State<'_, AppRuntime>,
-) -> Result<HostView, CommandError> {
-    if !approved {
-        return Err(CommandError::new(
-            "needs_approval",
-            "保存 Host 模式配置会写入 hostmode.json，需要你的确认",
-        ));
-    }
-    let mut cfg = config;
-    cfg.sanitize();
-    hostmode::save_config(&rt.paths.root, &cfg).map_err(|e| {
-        CommandError::new("io_error", format!("保存 hostmode.json 失败：{e}"))
-    })?;
-    rt.set_host_config(cfg.clone());
-    rt.log(
-        "info",
-        "host",
-        format!(
-            "Host 配置已保存：127.0.0.1:{} · {} 段 · {} 个域名",
-            cfg.listen_port,
-            cfg.fragment_parts,
-            cfg.domains.len()
-        ),
-    );
-    Ok(HostView {
-        config: cfg,
-        status: hostmode::status(),
+fn host_logger(app: &AppHandle) -> std::sync::Arc<dyn Fn(&str) + Send + Sync> {
+    let h = app.clone();
+    std::sync::Arc::new(move |m: &str| {
+        if let Some(rt) = h.try_state::<AppRuntime>() {
+            rt.log("info", "host", m);
+        }
     })
 }
 
+/// 按当前模式启动服务：clash → SOCKS；host → 80/443。
+pub fn start_service(app: &AppHandle, rt: &AppRuntime) -> Result<ServiceStatus, String> {
+    let cfg = rt.host_config();
+    let mode = rt.settings().mode;
+    hostmode::start(&mode, cfg, host_logger(app)).map(|st| {
+        rt.log(
+            "ok",
+            "host",
+            format!(
+                "服务已启动（{}）：{}",
+                if mode == "host" { "Host 模式" } else { "Clash 模式" },
+                st.view()
+            ),
+        );
+        st
+    })
+}
+
+pub fn stop_service(rt: &AppRuntime) {
+    hostmode::stop();
+    rt.log("info", "host", "服务已停止");
+}
+
+/// 单一开关：开 = 起服务并注入配置，关 = 停服务并撤掉配置。
+pub fn apply_enabled(app: &AppHandle, enabled: bool, approved: bool, origin: &str) {
+    let rt = app.state::<AppRuntime>();
+    if !approved {
+        rt.log("warn", origin, "缺少授权，已取消本次修改");
+        return;
+    }
+    let guard = lock_write(&rt);
+    {
+        let mut s = match rt.settings.write() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        s.enabled = enabled;
+        if let Err(e) = crate::state::settings::save_settings(&rt.paths.settings(), &s) {
+            rt.log("error", origin, format!("保存 settings.json 失败：{e}"));
+        }
+    }
+
+    if enabled {
+        rt.log("info", origin, "已授权：启动本地服务");
+        if let Err(e) = start_service(app, &rt) {
+            rt.log("error", origin, format!("启动失败：{e}"));
+            // 起不来就把开关退回，避免界面显示"已开启"却没用
+            if let Ok(mut s) = rt.settings.write() {
+                s.enabled = false;
+                let _ = crate::state::settings::save_settings(&rt.paths.settings(), &s);
+            }
+        }
+    } else {
+        rt.log("info", origin, "已授权：停止本地服务");
+        stop_service(&rt);
+    }
+    drop(guard);
+    tray::refresh(app);
+    emit_state(app);
+}
+
+pub fn apply_regenerate(app: &AppHandle, approved: bool, origin: &str) {
+    let rt = app.state::<AppRuntime>();
+    if !approved {
+        rt.log("warn", origin, "缺少授权，已取消本次操作");
+        return;
+    }
+    let guard = lock_write(&rt);
+    rt.log("info", origin, "已授权：导出配置到文件");
+    let _ = generate_locked(&rt, origin);
+    drop(guard);
+    tray::refresh(app);
+    emit_state(app);
+}
+
 #[tauri::command]
-pub fn host_start(
+pub fn host_set_config(
+    config: HostConfig,
     approved: bool,
     app: AppHandle,
     rt: State<'_, AppRuntime>,
@@ -456,47 +477,73 @@ pub fn host_start(
     if !approved {
         return Err(CommandError::new(
             "needs_approval",
-            "启动 Host 模式会在本机监听端口，需要你的确认",
+            "保存配置会写入 hostmode.json，需要你的确认",
         ));
     }
-    let cfg = rt.host_config();
-    if cfg.domains.is_empty() {
-        return Err(CommandError::new(
-            "bad_config",
-            "请先填写要走分片的域名（例如 nrd.nie.163.com）",
-        ));
+    let mut cfg = config;
+    cfg.sanitize();
+    hostmode::save_config(&rt.paths.root, &cfg)
+        .map_err(|e| CommandError::new("io_error", format!("保存 hostmode.json 失败：{e}")))?;
+    rt.set_host_config(cfg.clone());
+    rt.log(
+        "info",
+        "host",
+        format!(
+            "配置已保存：{} 个域名 · {} 段 · SOCKS {} / TLS {}",
+            cfg.domains.len(),
+            cfg.fragment_parts,
+            cfg.socks_port,
+            cfg.listen_port
+        ),
+    );
+
+    // 服务在跑就按新配置重启
+    if rt.settings().enabled {
+        stop_service(&rt);
+        let _ = start_service(&app, &rt);
+        tray::refresh(&app);
+        emit_state(&app);
     }
-    let handle = app.clone();
-    let logger: Arc<dyn Fn(&str) + Send + Sync> = Arc::new(move |m: &str| {
-        handle.state::<AppRuntime>().log("info", "host", m);
-    });
-    match hostmode::start(cfg.clone(), logger) {
-        Ok(addr) => {
-            rt.log("ok", "host", format!("Host 模式已启动：{addr}"));
-            Ok(HostView {
-                config: cfg,
-                status: hostmode::status(),
-            })
-        }
-        Err(e) => {
-            rt.log("error", "host", e.clone());
-            Err(CommandError::new("host_start", e))
-        }
-    }
+
+    Ok(HostView {
+        config: cfg,
+        status: hostmode::status(),
+    })
 }
 
 #[tauri::command]
-pub fn host_stop(app: AppHandle, rt: State<'_, AppRuntime>) -> HostView {
-    hostmode::stop();
-    rt.log("info", "host", "Host 模式已停止监听");
-    let _ = app.emit(STATE_EVENT, build_snapshot(&rt));
+pub fn service_start(
+    approved: bool,
+    app: AppHandle,
+    rt: State<'_, AppRuntime>,
+) -> Result<HostView, CommandError> {
+    apply_enabled(&app, true, approved, "ui");
+    Ok(HostView {
+        config: rt.host_config(),
+        status: hostmode::status(),
+    })
+}
+
+#[tauri::command]
+pub fn service_stop(app: AppHandle, rt: State<'_, AppRuntime>) -> HostView {
+    {
+        let mut s = match rt.settings.write() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        s.enabled = false;
+        let _ = crate::state::settings::save_settings(&rt.paths.settings(), &s);
+    }
+    stop_service(&rt);
+    tray::refresh(&app);
+    emit_state(&app);
     HostView {
         config: rt.host_config(),
         status: hostmode::status(),
     }
 }
 
-/// 写 hosts。没有权限时自动拉起提权子进程，结果异步写日志。
+/// 写 hosts（Host 模式一键配置）。没权限时拉起提权子进程。
 #[tauri::command]
 pub fn host_apply_hosts(
     approved: bool,
@@ -506,14 +553,13 @@ pub fn host_apply_hosts(
     if !approved {
         return Err(CommandError::new(
             "needs_approval",
-            "修改系统 hosts 会影响本机解析，且需要管理员权限，需要你的确认",
+            "修改系统 hosts 需要管理员权限，需要你的确认",
         ));
     }
     let cfg = rt.host_config();
     if cfg.domains.is_empty() {
         return Err(CommandError::new("bad_config", "没有要写入 hosts 的域名"));
     }
-    // 先落盘配置：提权子进程要靠它读域名
     hostmode::save_config(&rt.paths.root, &cfg).ok();
 
     let root = rt.paths.root.clone();
@@ -528,8 +574,7 @@ pub fn host_apply_hosts(
         } else {
             match hostmode::elevate::elevate(true, &root) {
                 Ok(()) => hostmode::elevate::wait_result(&root, std::time::Duration::from_secs(90))
-                    .map(|r| r.message)
-                    .map_err(|e| e),
+                    .map(|r| r.message),
                 Err(e) => Err(e),
             }
         };
@@ -590,11 +635,6 @@ pub fn host_clear_hosts(
         config: rt.host_config(),
         status: hostmode::status(),
     })
-}
-
-#[tauri::command]
-pub fn host_open_help() -> String {
-    "Host 模式需要三步：1) 启动本地转发；2) 写入 hosts（管理员）；3) 保持本程序运行。".to_string()
 }
 
 // ---------------------------------------------------------------- 原有命令
