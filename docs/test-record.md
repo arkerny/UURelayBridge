@@ -17,7 +17,7 @@ WebView2 157.0.4341.60　**日期**：2026-11-23
 | 依赖 | crates.io 直连 | ✅ 436 个 crate |
 | 图标 | `python tools/gen_icons.py` | ✅ `icon.ico`（16–256 多尺寸）、`icon.icns`（PNG 载荷）、托盘 on/off、macOS 模板图 |
 
-产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.2.1_x64-setup.exe`、`dist/RelayBridge_1.2.1_x64_en-US.msi`。
+产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.2.2_x64-setup.exe`、`dist/RelayBridge_1.2.2_x64_en-US.msi`。
 
 ## 2. 自动化测试
 
@@ -103,8 +103,8 @@ debug 与 release 两个产物都跑过，输出一致：
 
 | 产物 | 路径 | 说明 |
 |---|---|---|
-| NSIS | `dist/RelayBridge_1.2.1_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
-| MSI | `dist/RelayBridge_1.2.1_x64_en-US.msi` | 同上 |
+| NSIS | `dist/RelayBridge_1.2.2_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
+| MSI | `dist/RelayBridge_1.2.2_x64_en-US.msi` | 同上 |
 | 免安装 | `dist/RelayBridge.exe` | 双击即用 |
 
 卸载不删除 `%APPDATA%\RelayBridge`（用户数据与生成结果保留）。
@@ -126,7 +126,7 @@ debug 与 release 两个产物都跑过，输出一致：
 
 ---
 
-## 8. 回归记录（1.2.1）：双击没反应
+## 8. 回归记录（1.2.2）：双击没反应
 
 **现象**：用户双击 `dist\RelayBridge.exe` 后没有任何窗口，进程立即消失。
 事件日志里有两条 `Application Error`：`Exception code: 0xc0000409`（abort），模块为 `RelayBridge.exe`。
@@ -168,7 +168,41 @@ debug 与 release 两个产物都跑过，输出一致：
 |---|---|
 | 全新状态（删除 `%LOCALAPPDATA%\com.relaybridge.desktop`）+ 可写目录运行 | ✅ 窗口正常，自动创建 `EBWebView` |
 | 从受限目录运行 | ✅ 不再静默崩溃，弹出可读的错误对话框并写日志 |
-| 1.2.1 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
+| 1.2.2 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
 
 **给用户的结论**：程序本身没问题，但这个工作区目录受到写入限制；
 把 `dist\` 复制到工作区之外的普通目录（或把安装包复制出去再安装）即可。
+
+---
+
+## 9. 回归记录（1.2.2）：日志面板位置错乱
+
+**现象**：界面里内容区被压成一条（约 44px），日志框被撑到 415px 并停在页面中部，
+窗口底部空出约 220px 的空白 —— 也就是"日志框位置不对"。
+
+**定位**：在 WebView2 页面里执行 `getBoundingClientRect()` 把真实布局回写到日志
+（`RELAYBRIDGE_DUMP_LAYOUT=1`），拿到：
+
+```
+content  y=101 h=44
+logbar   y=145 h=415
+appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
+```
+
+**根因**：`.app` 用的是 `grid-template-rows: 56 auto 44 1fr 220`（5 行对应 5 个元素）。
+提示横幅 `.subtle-banner` 平时是 `display:none` —— 它不再是 grid item，
+后面的元素于是整体**上移一行**：`content` 落进了 44px 的标签行，
+`logbar` 抢到 `1fr`，最后那行 220px 空着。
+
+**修复**：`.app` 改为纵向 flex（`topbar` / `banner` / `tabs` 固定，`content: 1fr`，
+`logbar: 220px`），日志面板内部同样改为 flex；横幅显示与否都不再影响其他元素位置。
+
+**验证**（1.2.2 release，1080×780 视口）：
+
+| 指标 | 结果 |
+|---|---|
+| 内容区 | y=101, h=459（占满剩余空间） |
+| 日志面板 | y=560, h=220（贴窗口底部，无空白残留） |
+| 日志滚动区 | h=185，`scrollHeight 2772 > clientHeight 185` 可滚动 |
+| 滚动条 | `offsetWidth - clientWidth = 10`，位于面板右边缘（log.right = 1080） |
+| 主题 | `data-theme = light`（跟随系统） |

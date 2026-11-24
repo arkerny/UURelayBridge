@@ -387,6 +387,18 @@ pub fn get_logs(rt: State<'_, AppRuntime>, limit: Option<usize>) -> Vec<LogEntry
     rt.log_tail(limit.unwrap_or(300))
 }
 
+/// 前端把结构化日志写进同一条实时日志（排障用，界面本身也会调用）。
+#[tauri::command]
+pub fn frontend_log(level: String, message: String, rt: State<'_, AppRuntime>) {
+    let lv = match level.as_str() {
+        "warn" => "warn",
+        "error" => "error",
+        "ok" => "ok",
+        _ => "info",
+    };
+    rt.log(lv, "ui", message);
+}
+
 #[tauri::command]
 pub fn clear_logs(app: AppHandle, rt: State<'_, AppRuntime>) -> Snapshot {
     rt.clear_logs();

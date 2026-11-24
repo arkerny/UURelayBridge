@@ -180,6 +180,15 @@ fn create_main_window(app: &tauri::AppHandle, start_hidden: bool) -> tauri::Resu
         None => log_line("未能解析 WebView2 数据目录，沿用系统默认位置"),
     }
 
+    // 排障钩子：给 WebView2 传额外的浏览器参数（例如 --remote-debugging-port=9333）
+    if let Ok(args) = std::env::var("RELAYBRIDGE_WEBVIEW_ARGS") {
+        let t = args.trim();
+        if !t.is_empty() {
+            builder = builder.additional_browser_args(t);
+            log_line(&format!("WebView2 额外参数：{t}"));
+        }
+    }
+
     let window = match builder.build() {
         Ok(w) => w,
         Err(e) => {
@@ -201,11 +210,59 @@ fn create_main_window(app: &tauri::AppHandle, start_hidden: bool) -> tauri::Resu
     Ok(())
 }
 
+/// 排障用：读取首屏布局并写进日志。
+const LAYOUT_PROBE_JS: &str = r#"
+(function () {
+  function r(sel) {
+    var e = document.querySelector(sel);
+    if (!e) return null;
+    var b = e.getBoundingClientRect();
+    var cs = getComputedStyle(e);
+    return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height),
+             bg: cs.backgroundColor, ovY: cs.overflowY, disp: cs.display };
+  }
+  var log = document.getElementById('logBox');
+  // 灌 120 行，验证滚动条是否出现在日志面板右边缘、并且内容可滚动
+  if (log) {
+    for (var i = 0; i < 120; i++) {
+      var d = document.createElement('div');
+      d.className = 'line';
+      d.innerHTML = '<span class="ts">00:00:00</span><span class="lv info">INFO</span>' +
+                    '<span class="src">probe</span><span class="msg">layout probe line ' + i + '</span>';
+      log.appendChild(d);
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+  var o = {
+    theme: document.documentElement.getAttribute('data-theme'),
+    vp: { w: innerWidth, h: innerHeight, dpr: devicePixelRatio },
+    topbar: r('.topbar'), banner: r('.subtle-banner'), tabs: r('.tabs'),
+    content: r('.content'), logbar: r('.logbar'), loghead: r('.logbar-head'), log: r('.log'),
+    logScroll: log ? { sh: log.scrollHeight, ch: log.clientHeight,
+                       sbw: log.offsetWidth - log.clientWidth, lines: log.children.length,
+                       scrollTop: log.scrollTop,
+                       right: Math.round(log.getBoundingClientRect().right) } : null,
+    bodyBg: getComputedStyle(document.body).backgroundColor,
+    codeBg: getComputedStyle(document.documentElement).getPropertyValue('--code-bg').trim(),
+    sheets: Array.prototype.map.call(document.styleSheets, function (s) { return s.href || 'inline'; }),
+    logbarParent: document.querySelector('.logbar') ? document.querySelector('.logbar').parentElement.className : null,
+    contentParent: document.querySelector('.content') ? document.querySelector('.content').parentElement.className : null,
+    appKids: Array.prototype.map.call(document.querySelector('.app').children, function (e) {
+      var b = e.getBoundingClientRect();
+      return { tag: e.tagName, cls: e.className, y: Math.round(b.y), h: Math.round(b.height) };
+    }),
+    rowsCss: getComputedStyle(document.querySelector('.app')).gridTemplateRows
+  };
+  window.__TAURI__.core.invoke('frontend_log', { level: 'info', message: 'LAYOUT ' + JSON.stringify(o) });
+})();
+"#;
+
 pub fn run() {
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,
             commands::get_logs,
+            commands::frontend_log,
             commands::clear_logs,
             commands::preview,
             commands::set_enabled,
@@ -268,6 +325,16 @@ pub fn run() {
             }
             // 启动即应用主题（标题栏跟随系统 / 浅色 / 深色）
             commands::apply_window_theme(&handle, &handle.state::<state::Runtime>().settings().theme);
+
+            // 排障钩子：把首屏真实布局回写到日志（只在该环境变量存在时执行）
+            if std::env::var("RELAYBRIDGE_DUMP_LAYOUT").is_ok() {
+                if let Some(w) = handle.get_webview_window("main") {
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(2500));
+                        let _ = w.eval(LAYOUT_PROBE_JS);
+                    });
+                }
+            }
 
             // 托盘初始化失败不应让 GUI 起不来：记录错误，主窗口仍可用
             let enabled = handle.state::<state::Runtime>().settings().enabled;

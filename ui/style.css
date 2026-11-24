@@ -163,11 +163,20 @@ html, body {
 
 code, .mono, pre, textarea.code-input { font-family: var(--mono); font-size: 12.5px; user-select: text; }
 
+/* 用 flex 而不是 grid-template-rows：
+ * 提示横幅是"有时显示"的，grid 固定行数会在它 display:none 时让后面所有元素上移一行。 */
 .app {
-  display: grid;
-  grid-template-rows: var(--topbar-h) auto var(--tabs-h) minmax(0, 1fr) var(--logbar-h);
+  display: flex;
+  flex-direction: column;
   height: 100vh;
+  overflow: hidden;
 }
+
+.topbar { flex: 0 0 var(--topbar-h); }
+.subtle-banner { flex: 0 0 auto; }
+.tabs { flex: 0 0 var(--tabs-h); }
+.content { flex: 1 1 auto; }
+.logbar { flex: 0 0 var(--logbar-h); }
 
 /* ---------- top bar ---------- */
 .topbar {
@@ -381,12 +390,13 @@ table.rules tr:hover td { background: var(--panel-2); }
 .logbar {
   border-top: 1px solid var(--line-soft);
   background: var(--code-bg);
-  display: grid;
-  grid-template-rows: 34px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   overflow: hidden;               /* 让滚动条只出现在 .log 里，而不是被窗口裁掉 */
 }
 .logbar-head {
+  flex: 0 0 34px;
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 12px; border-bottom: 1px solid var(--line-soft);
 }
@@ -395,9 +405,10 @@ table.rules tr:hover td { background: var(--panel-2); }
 .chk { display: inline-flex; align-items: center; gap: 5px; }
 .chk input { accent-color: var(--accent); }
 
-/* 关键：min-height:0 让 grid 子项真正收缩；scrollbar-gutter 固定预留滚动条槽位，
+/* 关键：min-height:0 让 flex 子项真正收缩；scrollbar-gutter 固定预留滚动条槽位，
    滚动条始终贴在日志面板右边缘，不会压住内容，也不会跑到窗口外面。 */
 .log {
+  flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   overflow-y: auto;

@@ -1,4 +1,4 @@
-# RelayBridge v1.2.1
+# RelayBridge v1.2.2
 
 轻量级 **Clash Verge Rev 扩展配置生成器**。常驻托盘 / 菜单栏，把你定义的域名 / IP 规则生成一段
 `main(config)` 扩展脚本，由你手动粘贴进 Clash Verge Rev。
@@ -82,8 +82,8 @@ cargo build --release
 # 出安装包（NSIS + MSI，用户级安装）
 npm install -D @tauri-apps/cli@^2
 npx tauri build
-# 产物：target\release\bundle\nsis\RelayBridge_1.2.1_x64-setup.exe
-#       target\release\bundle\msi\RelayBridge_1.2.1_x64_en-US.msi
+# 产物：target\release\bundle\nsis\RelayBridge_1.2.2_x64-setup.exe
+#       target\release\bundle\msi\RelayBridge_1.2.2_x64_en-US.msi
 ```
 
 macOS 见 [docs/build-macos.md](docs/build-macos.md)（`.app` 必须在 Mac 上编译、签名、公证）。
@@ -130,6 +130,8 @@ macOS:   ~/Library/Application Support/RelayBridge/
 | `RELAYBRIDGE_DATA_DIR` | 覆盖数据目录（便携模式 / 自动化测试） |
 | `RELAYBRIDGE_WEBVIEW_DIR` | 覆盖 WebView2 用户数据目录 |
 | `RELAYBRIDGE_LOG_FILE` | 把实时日志同时追加到文件 |
+| `RELAYBRIDGE_WEBVIEW_ARGS` | 给 WebView2 传额外浏览器参数（排障用） |
+| `RELAYBRIDGE_DUMP_LAYOUT` | 启动后把首屏真实布局写进日志（排障用） |
 
 ---
 
@@ -137,7 +139,7 @@ macOS:   ~/Library/Application Support/RelayBridge/
 
 **症状**：双击 `RelayBridge.exe` 后没有任何窗口，进程闪一下就没（任务管理器里也看不到常驻）。
 
-**现在会怎样**：从 1.2.1 起，启动失败会弹一个对话框说明原因，并把同样内容写到
+**现在会怎样**：从 1.2.2 起，启动失败会弹一个对话框说明原因，并把同样内容写到
 `%TEMP%\relaybridge-startup-error.log`（如果设置了 `RELAYBRIDGE_LOG_FILE` 则写到该文件）。
 
 **最常见的原因：WebView2 的数据目录不可写。**
@@ -155,7 +157,7 @@ Tauri 把 `%LOCALAPPDATA%\<应用ID>`（本程序是 `%LOCALAPPDATA%\com.relaybr
 2. 或者把安装包也复制到那样的目录后再运行（安装器默认装到 `%LOCALAPPDATA%\Programs\RelayBridge`）；
 3. 或者设置环境变量 `RELAYBRIDGE_WEBVIEW_DIR=<可写目录>` 后启动。
 
-> 实测记录（1.2.1）：同一个 exe 放在 `Desktop\hdu-uu-fix\...` 下启动会因 `Access denied` 失败
+> 实测记录（1.2.2）：同一个 exe 放在 `Desktop\hdu-uu-fix\...` 下启动会因 `Access denied` 失败
 > （连 Task Scheduler 启动也一样）；复制到 `Desktop\relaybridge-standalone\` 后窗口正常打开，
 > 并自动创建 `%LOCALAPPDATA%\com.relaybridge.desktop\EBWebView`。
 > 说明限制来自"进程所在目录"这条策略，而不是程序本身。
