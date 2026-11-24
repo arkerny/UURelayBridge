@@ -32,9 +32,125 @@ fn data_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(base.join("RelayBridge"))
 }
 
+/// 极简的文件日志：GUI 程序没有控制台，启动期出错必须留下痕迹。
+fn log_line(msg: &str) {
+    if let Ok(path) = std::env::var("RELAYBRIDGE_LOG_FILE") {
+        let t = path.trim();
+        if !t.is_empty() {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(t) {
+                let _ = writeln!(f, "[boot] {msg}");
+            }
+        }
+    }
+}
+
+/// WebView2 的用户数据目录。
+///
+/// Tauri 默认把它设为 `app_local_data_dir()`（Windows 上是
+/// `%LOCALAPPDATA%\<identifier>`）。但 WebView2 **不会**替我们创建这个目录：
+/// 目录不存在时 `CreateCoreWebView2Environment` 直接返回 `Access denied (0x5)`，
+/// 于是首次启动（或用户清理过该目录）时窗口根本建不出来。
+/// 这里先自己建好，再显式传给 wry，并按"越靠近标准位置越好"的顺序兜底。
+fn webview_data_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let primary = app.path().app_local_data_dir();
+    log_line(&format!("app_local_data_dir = {:?}", primary));
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(p) = primary {
+        candidates.push(p);
+    }
+    // 次选：RelayBridge 自己的数据目录（%APPDATA%\RelayBridge\webview2）
+    if let Ok(p) = data_root(app) {
+        candidates.push(p.join("webview2"));
+    }
+    // 最后：系统临时目录
+    candidates.push(std::env::temp_dir().join("RelayBridge-webview2"));
+
+    for dir in candidates {
+        let r = std::fs::create_dir_all(&dir);
+        log_line(&format!("create_dir_all({}) => {:?}", dir.display(), r));
+        if r.is_ok() {
+            return Some(dir);
+        }
+    }
+    None
+}
+
+/// 启动失败时的可见反馈：没有控制台的 GUI 静默退出等于"双击没反应"。
+fn report_fatal(_app: &tauri::AppHandle, message: &str) {
+    let body = format!(
+        "{message}\n\n--- RelayBridge {} ---\n",
+        env!("CARGO_PKG_VERSION")
+    );
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(p) = std::env::var("RELAYBRIDGE_LOG_FILE") {
+        let t = p.trim();
+        if !t.is_empty() {
+            candidates.push(PathBuf::from(t));
+        }
+    }
+    candidates.push(std::env::temp_dir().join("relaybridge-startup-error.log"));
+
+    let written = candidates
+        .into_iter()
+        .find(|p| std::fs::write(p, &body).is_ok());
+
+    let text = match &written {
+        Some(p) => format!("{message}\n\n详细信息：{}", p.display()),
+        None => message.to_string(),
+    };
+    show_error_dialog(&text);
+    // 弹窗是阻塞的，用户点掉之后直接结束进程，避免 Tauri 因 setup 失败而 panic
+    std::process::exit(1);
+}
+
+#[cfg(windows)]
+fn show_error_dialog(message: &str) {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBoxW(
+            hwnd: *mut core::ffi::c_void,
+            text: *const u16,
+            caption: *const u16,
+            utype: u32,
+        ) -> i32;
+    }
+    fn wide(s: &str) -> Vec<u16> {
+        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    }
+    let text = wide(message);
+    let caption = wide("RelayBridge 启动失败");
+    // MB_ICONERROR | MB_TOPMOST
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            0x0000_0010 | 0x0004_0000,
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn show_error_dialog(message: &str) {
+    let escaped = message.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!("display alert \"RelayBridge 启动失败\" message \"{escaped}\" as critical");
+    let _ = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .spawn();
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn show_error_dialog(message: &str) {
+    eprintln!("{message}");
+}
+
 /// 主窗口在这里创建（而不是由配置自动创建），
-/// 这样可以在便携模式下把 WebView2 数据目录指到别处；
-/// 普通用户不设这个环境变量，行为与默认完全一致。
+/// 这样能先准备好 WebView2 数据目录，避免首次启动 Access denied。
 fn create_main_window(app: &tauri::AppHandle, start_hidden: bool) -> tauri::Result<()> {
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("RelayBridge")
@@ -45,14 +161,32 @@ fn create_main_window(app: &tauri::AppHandle, start_hidden: bool) -> tauri::Resu
         .resizable(true)
         .decorations(true);
 
-    if let Ok(dir) = std::env::var("RELAYBRIDGE_WEBVIEW_DIR") {
-        let t = dir.trim();
-        if !t.is_empty() {
-            builder = builder.data_directory(PathBuf::from(t));
+    // 便携 / 测试用的显式覆盖优先，其次是默认的本地数据目录，最后是临时目录
+    let override_dir = std::env::var("RELAYBRIDGE_WEBVIEW_DIR")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+
+    match override_dir.or_else(|| webview_data_dir(app)) {
+        Some(dir) => {
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                log_line(&format!("创建 WebView2 数据目录失败 {}：{e}", dir.display()));
+            } else {
+                log_line(&format!("WebView2 数据目录：{}", dir.display()));
+            }
+            builder = builder.data_directory(dir);
         }
+        None => log_line("未能解析 WebView2 数据目录，沿用系统默认位置"),
     }
 
-    let window = builder.build()?;
+    let window = match builder.build() {
+        Ok(w) => w,
+        Err(e) => {
+            log_line(&format!("创建窗口失败：{e}"));
+            return Err(e);
+        }
+    };
     let handle = app.clone();
     let w = window.clone();
     window.on_window_event(move |event| {
@@ -89,7 +223,13 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            let root = data_root(&handle)?;
+            let root = match data_root(&handle) {
+                Ok(p) => p,
+                Err(e) => {
+                    report_fatal(&handle, &format!("无法确定应用数据目录：{e}"));
+                    return Ok(());
+                }
+            };
             let paths = state::AppPaths::new(root);
             let start_hidden = state::settings::load_settings(&paths.settings())
                 .value
@@ -101,7 +241,28 @@ pub fn run() {
 
             commands::log_startup(&handle, &paths);
 
-            create_main_window(&handle, start_hidden)?;
+            if let Err(e) = create_main_window(&handle, start_hidden) {
+                let webview_hint = handle
+                    .path()
+                    .app_local_data_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "%LOCALAPPDATA%\\<应用ID>".to_string());
+                report_fatal(
+                    &handle,
+                    &format!(
+                        "创建主窗口失败：{e}\n\n\
+                         WebView2 需要在 {webview_hint} 下建立数据目录，但当前无法写入。\n\n\
+                         常见原因：\n\
+                         1) 程序被放在受限制的目录里（部分沙箱 / 安全软件会限制该目录下的进程只能写自己的目录）；\n\
+                         2) 该目录权限异常，或磁盘已满。\n\n\
+                         处理建议：\n\
+                         • 用安装包安装，或把 RelayBridge.exe 移到可写目录（例如 %LOCALAPPDATA%\\Programs\\RelayBridge）后再运行；\n\
+                         • 或设置环境变量 RELAYBRIDGE_WEBVIEW_DIR 指向一个可写目录；\n\
+                         • 仍然失败时，安装 Microsoft Edge WebView2 Runtime 后重试。"
+                    ),
+                );
+                return Ok(());
+            }
             if start_hidden {
                 commands::log(&handle, "info", "window", "按设置以隐藏状态启动");
             }

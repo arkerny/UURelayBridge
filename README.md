@@ -1,4 +1,4 @@
-# RelayBridge v1.2
+# RelayBridge v1.2.1
 
 轻量级 **Clash Verge Rev 扩展配置生成器**。常驻托盘 / 菜单栏，把你定义的域名 / IP 规则生成一段
 `main(config)` 扩展脚本，由你手动粘贴进 Clash Verge Rev。
@@ -82,8 +82,8 @@ cargo build --release
 # 出安装包（NSIS + MSI，用户级安装）
 npm install -D @tauri-apps/cli@^2
 npx tauri build
-# 产物：target\release\bundle\nsis\RelayBridge_1.2.0_x64-setup.exe
-#       target\release\bundle\msi\RelayBridge_1.2.0_x64_en-US.msi
+# 产物：target\release\bundle\nsis\RelayBridge_1.2.1_x64-setup.exe
+#       target\release\bundle\msi\RelayBridge_1.2.1_x64_en-US.msi
 ```
 
 macOS 见 [docs/build-macos.md](docs/build-macos.md)（`.app` 必须在 Mac 上编译、签名、公证）。
@@ -133,7 +133,37 @@ macOS:   ~/Library/Application Support/RelayBridge/
 
 ---
 
-## 七、测试
+## 七、故障排查：双击没反应 / 启动失败
+
+**症状**：双击 `RelayBridge.exe` 后没有任何窗口，进程闪一下就没（任务管理器里也看不到常驻）。
+
+**现在会怎样**：从 1.2.1 起，启动失败会弹一个对话框说明原因，并把同样内容写到
+`%TEMP%\relaybridge-startup-error.log`（如果设置了 `RELAYBRIDGE_LOG_FILE` 则写到该文件）。
+
+**最常见的原因：WebView2 的数据目录不可写。**
+
+Tauri 把 `%LOCALAPPDATA%\<应用ID>`（本程序是 `%LOCALAPPDATA%\com.relaybridge.desktop`）
+作为 WebView2 的用户数据目录，而 WebView2 **不会**自己创建它；目录不存在或不可写时
+`CreateCoreWebView2Environment` 直接返回 `Access denied (0x5)`，窗口就建不出来。
+
+程序现在会先自己创建该目录（不行就依次退到 `%APPDATA%\RelayBridge\webview2`、临时目录），
+但如果整个进程被限制"只能写自己所在目录"（部分沙箱 / 安全软件 / 受控文件夹访问会这样），
+三个位置都会失败 —— 这种情况**把程序挪出受限目录**即可：
+
+1. 把 `RelayBridge.exe`（或整个 `dist/`）复制到工作区之外的普通目录，
+   例如 `C:\Users\arkerny\Desktop\relaybridge-standalone\`，再双击；
+2. 或者把安装包也复制到那样的目录后再运行（安装器默认装到 `%LOCALAPPDATA%\Programs\RelayBridge`）；
+3. 或者设置环境变量 `RELAYBRIDGE_WEBVIEW_DIR=<可写目录>` 后启动。
+
+> 实测记录（1.2.1）：同一个 exe 放在 `Desktop\hdu-uu-fix\...` 下启动会因 `Access denied` 失败
+> （连 Task Scheduler 启动也一样）；复制到 `Desktop\relaybridge-standalone\` 后窗口正常打开，
+> 并自动创建 `%LOCALAPPDATA%\com.relaybridge.desktop\EBWebView`。
+> 说明限制来自"进程所在目录"这条策略，而不是程序本身。
+
+其他原因：没装 WebView2 运行时（Win10 早期版本可能没有，装 Microsoft Edge WebView2 Runtime 即可）、
+磁盘已满、`%LOCALAPPDATA%` 权限被改坏。
+
+## 八、测试
 
 ```powershell
 cargo test -p relaybridge-core        # 41 个单元测试 + 4 个"真跑 JS"的行为测试
@@ -151,7 +181,7 @@ cargo build -p relaybridge            # 构建后再跑下面的自检
 
 ---
 
-## 八、已知限制
+## 九、已知限制
 
 - 首期只实现 Clash Verge Rev 适配器；Mihomo / sing-box 保留接口，调用会明确报「未实现」。
 - 不做系统通知（用界面 toast + 日志，少一个插件依赖）。
@@ -160,6 +190,6 @@ cargo build -p relaybridge            # 构建后再跑下面的自检
 
 ---
 
-## 九、许可
+## 十、许可
 
 仅用于个人配置管理。使用前请自行确认所在网络/单位的相关规定。

@@ -189,8 +189,7 @@ mod tests {
 
     #[test]
     fn runtime_starts_without_touching_disk() {
-        let d = std::env::temp_dir().join(format!("rb-rt-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = relaybridge_core::test_tmp_dir("rt");
         std::fs::create_dir_all(&d).unwrap();
         let rt = Runtime::new(AppPaths::new(d.clone()));
         assert!(!rt.settings().enabled);
@@ -202,8 +201,7 @@ mod tests {
 
     #[test]
     fn log_ring_is_bounded() {
-        let d = std::env::temp_dir().join(format!("rb-rt-log-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = relaybridge_core::test_tmp_dir("rt-log");
         let rt = Runtime::new(AppPaths::new(d.clone()));
         for i in 0..(LOG_CAPACITY + 50) {
             rt.log("info", "test", format!("line {}", i));

@@ -59,8 +59,7 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let d = std::env::temp_dir().join(format!("rb-manifest-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = crate::test_tmp_dir("manifest");
         std::fs::create_dir_all(&d).unwrap();
         let p = d.join("manifest.json");
         write(&p, &sample()).unwrap();

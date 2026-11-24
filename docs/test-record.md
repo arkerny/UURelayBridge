@@ -17,7 +17,7 @@ WebView2 157.0.4341.60　**日期**：2026-11-23
 | 依赖 | crates.io 直连 | ✅ 436 个 crate |
 | 图标 | `python tools/gen_icons.py` | ✅ `icon.ico`（16–256 多尺寸）、`icon.icns`（PNG 载荷）、托盘 on/off、macOS 模板图 |
 
-产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.2.0_x64-setup.exe`、`dist/RelayBridge_1.2.0_x64_en-US.msi`。
+产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.2.1_x64-setup.exe`、`dist/RelayBridge_1.2.1_x64_en-US.msi`。
 
 ## 2. 自动化测试
 
@@ -30,6 +30,9 @@ cargo test -p relaybridge-core
 | 单元测试（模型 / 规则语法 / 编译 / 校验 / 原子写 / 备份 / 设置 / 主题 / 路径穿越 / 日志） | 43 | ✅ |
 | `cvr_script_semantics`（真实 Node 执行生成的 JS） | 4 | ✅ |
 | doc-test | 0 | — |
+
+测试的临时目录写在 `target/test-tmp/`（`relaybridge_core::test_tmp_dir`），
+不依赖 `%TEMP%`——受限环境（沙箱 / 临时目录只读）里也能跑。
 
 脚本行为测试覆盖：
 
@@ -100,8 +103,8 @@ debug 与 release 两个产物都跑过，输出一致：
 
 | 产物 | 路径 | 说明 |
 |---|---|---|
-| NSIS | `dist/RelayBridge_1.2.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
-| MSI | `dist/RelayBridge_1.2.0_x64_en-US.msi` | 同上 |
+| NSIS | `dist/RelayBridge_1.2.1_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
+| MSI | `dist/RelayBridge_1.2.1_x64_en-US.msi` | 同上 |
 | 免安装 | `dist/RelayBridge.exe` | 双击即用 |
 
 卸载不删除 `%APPDATA%\RelayBridge`（用户数据与生成结果保留）。
@@ -120,3 +123,52 @@ debug 与 release 两个产物都跑过，输出一致：
 - [ ] 托盘「退出」→ 进程消失，数据目录与输出文件都还在
 - [ ] 重新启动 → 状态与规则恢复
 - [ ] 把脚本贴进 Clash Verge Rev 扩展脚本并重载，规则出现在最前面
+
+---
+
+## 8. 回归记录（1.2.1）：双击没反应
+
+**现象**：用户双击 `dist\RelayBridge.exe` 后没有任何窗口，进程立即消失。
+事件日志里有两条 `Application Error`：`Exception code: 0xc0000409`（abort），模块为 `RelayBridge.exe`。
+
+**定位过程**
+
+1. 事件日志 → `0xC0000409`（`FAST_FAIL_FATAL_APP_EXIT`，即 Rust `panic!` + `panic = "abort"`）。
+2. release 是 GUI 子系统、没有控制台，panic 文本无处输出，所以表现为"静默不启动"。
+3. 重定向 stderr 复现，拿到 panic：`Failed to setup app: ... Access is denied. (os error 5)`。
+4. 加 boot 日志定位到 `WebviewWindowBuilder::build()`；再记录 `create_dir_all` 结果：
+
+   ```
+   app_local_data_dir = Ok("C:\\Users\\arkerny\\AppData\\Local\\com.relaybridge.desktop")
+   create_dir_all(...\com.relaybridge.desktop) => Err(PermissionDenied, "Access is denied.")
+   create_dir_all(...\Temp\RelayBridge-webview2) => Err(PermissionDenied, "Access is denied.")
+   ```
+
+5. 交叉验证：`cmd.exe` / `python.exe` / `node.exe` 都能在同一位置建目录，
+   **同一个 exe 复制到 `%TEMP%` 或 `%LOCALAPPDATA%\Programs\` 就能正常启动**
+   （包括通过 Task Scheduler 启动也一样失败，说明与父进程无关，取决于程序所在目录）。
+
+**根因（两层）**
+
+- 产品缺陷：Tauri 把 `%LOCALAPPDATA%\<identifier>` 当 WebView2 用户数据目录，而 WebView2
+  **不会**创建它；目录不存在时直接返回 `Access denied (0x5)`。首次启动必然踩中。
+- 环境限制：本机把 `Desktop\hdu-uu-fix\` 这个目录里的进程限制为只能写自身目录，
+  于是"先建目录"的兜底也会失败 —— 这属于运行位置问题，不是程序逻辑问题。
+
+**修复**
+
+1. 创建窗口前先显式 `create_dir_all` 并 `data_directory(...)`，顺序为：
+   应用本地数据目录 → `%APPDATA%\RelayBridge\webview2` → 系统临时目录。
+2. 窗口创建失败不再走 `panic`：写启动错误日志（`RELAYBRIDGE_LOG_FILE` 或 `%TEMP%`），
+   弹 `MessageBox` 说明原因与处理建议，然后以退出码 1 结束。
+
+**验证**
+
+| 场景 | 结果 |
+|---|---|
+| 全新状态（删除 `%LOCALAPPDATA%\com.relaybridge.desktop`）+ 可写目录运行 | ✅ 窗口正常，自动创建 `EBWebView` |
+| 从受限目录运行 | ✅ 不再静默崩溃，弹出可读的错误对话框并写日志 |
+| 1.2.1 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
+
+**给用户的结论**：程序本身没问题，但这个工作区目录受到写入限制；
+把 `dist\` 复制到工作区之外的普通目录（或把安装包复制出去再安装）即可。

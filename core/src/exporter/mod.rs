@@ -216,10 +216,7 @@ mod tests {
     use crate::model::{Action, Match, Rule};
 
     fn tmpdir(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("rb-export-{}-{}", tag, std::process::id()));
-        let _ = std::fs::remove_dir_all(&p);
-        std::fs::create_dir_all(&p).unwrap();
-        p
+        crate::test_tmp_dir(tag)
     }
 
     fn paths(root: &std::path::Path) -> ExportPaths {

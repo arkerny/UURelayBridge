@@ -30,15 +30,7 @@ fn unique() -> usize {
 }
 
 fn tmpdir(tag: &str) -> PathBuf {
-    let p = std::env::temp_dir().join(format!(
-        "rb-js-{}-{}-{}",
-        tag,
-        std::process::id(),
-        unique()
-    ));
-    let _ = fs::remove_dir_all(&p);
-    fs::create_dir_all(&p).unwrap();
-    p
+    relaybridge_core::test_tmp_dir(&format!("{}-{}", tag, unique()))
 }
 
 fn sample_project(enabled: bool) -> Project {
