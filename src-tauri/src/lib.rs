@@ -283,6 +283,28 @@ const LAYOUT_PROBE_JS: &str = r#"
     rowsCss: getComputedStyle(document.querySelector('.app')).gridTemplateRows
   };
   window.__TAURI__.core.invoke('frontend_log', { level: 'info', message: 'LAYOUT ' + JSON.stringify(o) });
+  // 模拟点击「本机转发」，1.5 秒后回报模式与标签
+  try {
+    var hostBtn = document.querySelector('#modeSwitch [data-mode="host"]');
+    if (hostBtn) {
+      setTimeout(function () {
+        hostBtn.click();
+        setTimeout(function () {
+          var active = document.querySelector('.mode-btn.active');
+          var tabs = Array.prototype.filter.call(document.querySelectorAll('.tab'), function (t) { return !t.hidden; })
+            .map(function (t) { return t.textContent.trim(); });
+          var ta = document.getElementById('hostDomains');
+          var msg = 'MODE ' + JSON.stringify({
+            mode: active ? active.dataset.mode : null,
+            tabs: tabs,
+            page: (document.querySelector('.page.active') || {}).id || null,
+            domains: ta ? ta.value.split('\n').filter(Boolean).length : -1
+          });
+          window.__TAURI__.core.invoke('frontend_log', { level: 'info', message: msg });
+        }, 1500);
+      }, 400);
+    }
+  } catch (e) {}
 })();
 "#;
 

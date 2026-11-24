@@ -17,7 +17,7 @@ WebView2 157.0.4341.60　**日期**：2026-11-23
 | 依赖 | crates.io 直连 | ✅ 436 个 crate |
 | 图标 | `python tools/gen_icons.py` | ✅ `icon.ico`（16–256 多尺寸）、`icon.icns`（PNG 载荷）、托盘 on/off、macOS 模板图 |
 
-产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.6.0_x64-setup.exe`、`dist/RelayBridge_1.6.0_x64_en-US.msi`。
+产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.6.1_x64-setup.exe`、`dist/RelayBridge_1.6.1_x64_en-US.msi`。
 
 ## 2. 自动化测试
 
@@ -103,8 +103,8 @@ debug 与 release 两个产物都跑过，输出一致：
 
 | 产物 | 路径 | 说明 |
 |---|---|---|
-| NSIS | `dist/RelayBridge_1.6.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
-| MSI | `dist/RelayBridge_1.6.0_x64_en-US.msi` | 同上 |
+| NSIS | `dist/RelayBridge_1.6.1_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
+| MSI | `dist/RelayBridge_1.6.1_x64_en-US.msi` | 同上 |
 | 免安装 | `dist/RelayBridge.exe` | 双击即用 |
 
 卸载不删除 `%APPDATA%\RelayBridge`（用户数据与生成结果保留）。
@@ -126,7 +126,7 @@ debug 与 release 两个产物都跑过，输出一致：
 
 ---
 
-## 8. 回归记录（1.6.0）：双击没反应
+## 8. 回归记录（1.6.1）：双击没反应
 
 **现象**：用户双击 `dist\RelayBridge.exe` 后没有任何窗口，进程立即消失。
 事件日志里有两条 `Application Error`：`Exception code: 0xc0000409`（abort），模块为 `RelayBridge.exe`。
@@ -168,14 +168,14 @@ debug 与 release 两个产物都跑过，输出一致：
 |---|---|
 | 全新状态（删除 `%LOCALAPPDATA%\com.relaybridge.desktop`）+ 可写目录运行 | ✅ 窗口正常，自动创建 `EBWebView` |
 | 从受限目录运行 | ✅ 不再静默崩溃，弹出可读的错误对话框并写日志 |
-| 1.6.0 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
+| 1.6.1 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
 
 **给用户的结论**：程序本身没问题，但这个工作区目录受到写入限制；
 把 `dist\` 复制到工作区之外的普通目录（或把安装包复制出去再安装）即可。
 
 ---
 
-## 9. 回归记录（1.6.0）：日志面板位置错乱
+## 9. 回归记录（1.6.1）：日志面板位置错乱
 
 **现象**：界面里内容区被压成一条（约 44px），日志框被撑到 415px 并停在页面中部，
 窗口底部空出约 220px 的空白 —— 也就是"日志框位置不对"。
@@ -197,7 +197,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 **修复**：`.app` 改为纵向 flex（`topbar` / `banner` / `tabs` 固定，`content: 1fr`，
 `logbar: 220px`），日志面板内部同样改为 flex；横幅显示与否都不再影响其他元素位置。
 
-**验证**（1.6.0 release，1080×780 视口）：
+**验证**（1.6.1 release，1080×780 视口）：
 
 | 指标 | 结果 |
 |---|---|
@@ -209,7 +209,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 ---
 
-## 10. 1.6.0：改名 / 复制模式 / Host 模式
+## 10. 1.6.1：改名 / 复制模式 / Host 模式
 
 **改名**：crate `uurelaybridge(-core)`、产品名 `UURelayBridge`、identifier
 `com.uurelaybridge.desktop`、数据目录 `%APPDATA%\UURelayBridge`、窗口标题同步；
@@ -239,7 +239,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 ---
 
-## 11. 1.6.0：SNI 配置同时作用于 Clash 模式
+## 11. 1.6.1：SNI 配置同时作用于 Clash 模式
 
 **做法**：Host 模式里的域名/分片参数是唯一一份，生成 Clash 脚本时同步使用：
 
@@ -264,7 +264,7 @@ Host 页 6 个表单字段、日志栏拖拽 340→460px 均正常。
 
 ---
 
-## 12. 1.6.0：模式选单 / DoH / 界面精简
+## 12. 1.6.1：模式选单 / DoH / 界面精简
 
 **模式选单**：顶部「Clash 规则 / 本机转发」二选一，存进 `settings.json` 的 `mode`；
 切换后标签页跟着变（clash：概览/规则/设置；host：本机转发/设置）。
@@ -292,7 +292,7 @@ Host 页改为「域名 / 端口 / 分片 / DNS」四项 + 状态侧栏；DoH �
 
 ---
 
-## 13. 1.6.0：内置 UU 远程端点预置
+## 13. 1.6.1：内置 UU 远程端点预置
 
 `core/src/presets.rs` 内置 6 个端点（`UU_ENDPOINTS` + 公共后缀 `UU_SUFFIX`），
 Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」按钮可一键填入。
@@ -306,3 +306,28 @@ Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」
 顺带修了一个启动期问题：`applyMode()` 原来嵌在 boot 的 `guard()` 回调里，
 而 `guard()` 用 `S.busy` 做重入保护，导致 host 模式下首次加载配置被静默跳过
 （表现为域名/DNS 输入框空白）。现在 `applyMode()` 在 guard 之外调用。
+
+---
+
+## 14. 1.6.1：修复顶部模式选单点击无响应
+
+**现象**：顶部的「本机转发」按钮点了没反应，模式仍是 Clash 规则。
+
+**定位**：给布局探针加了一步"模拟点击按钮并回报状态"，结果 `mode` 仍是 `clash`、无报错。
+检查 `ui/app.js` 发现 `bind()` 里**根本没有 `modeSwitch` 的监听器**——
+上一轮的批量替换用 `String.Replace` 匹配缩进时没命中，脚本"成功退出"但实际没插入。
+
+**修复**：
+- 在 `bind()` 里补上模式选单监听（点击 → `set_mode` → `applyMode`）；
+- `applyMode()` 里加载 Host 配置的动作改为 `setTimeout(0)` 延后，避免又被 `S.busy`
+  重入保护吞掉（这是同一类问题第二次出现，已写入注释）。
+
+**验证**（真实进程 + 探针模拟点击）：
+
+| 场景 | 结果 |
+|---|---|
+| 默认 clash → 点「本机转发」 | ✅ mode=host，标签变为 本机转发/设置，页面切到 page-host，域名 6 个 |
+| host → 点「Clash 规则」 | ✅ mode=clash，标签回到 概览/规则/设置 |
+| 选择是否落盘 | ✅ `settings.json` 里 `"mode": "host"` |
+
+顺带把启动日志里的产品名统一成 `UURelayBridge`。

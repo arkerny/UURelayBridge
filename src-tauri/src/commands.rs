@@ -885,7 +885,7 @@ pub fn log_startup(app: &AppHandle, paths: &AppPaths) {
         "info",
         "app",
         format!(
-            "RelayBridge v{} 启动（{}）",
+            "UURelayBridge v{} 启动（{}）",
             platform::app_version(),
             platform::platform_name()
         ),

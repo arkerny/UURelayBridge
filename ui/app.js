@@ -557,6 +557,17 @@
       t.addEventListener("click", () => switchTab(t.dataset.tab));
     });
 
+    // 顶部「Clash 规则 / 本机转发」选单
+    $("modeSwitch").addEventListener("click", (e) => {
+      const btn = e.target.closest(".mode-btn");
+      if (!btn || btn.dataset.mode === currentMode()) return;
+      const next = btn.dataset.mode;
+      guard(async () => {
+        S.snap = await api("set_mode", { mode: next });
+        applyMode();
+      });
+    });
+
     $("toggleEnabled").addEventListener("change", async (ev) => {
       const want = ev.target.checked;
       ev.target.checked = !want;
@@ -860,8 +871,11 @@
     });
     switchTab(mode === "host" ? "host" : "overview");
     if (mode === "host" && hasBackend()) {
-      guard(loadHost);
-      pollHost();
+      // 放到本轮 guard 结束之后，否则会被 S.busy 的重入保护吞掉
+      setTimeout(() => {
+        guard(loadHost);
+        pollHost();
+      }, 0);
     }
   }
 

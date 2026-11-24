@@ -3913,7 +3913,7 @@ dependencies = [
 
 [[package]]
 name = "uurelaybridge"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "chrono",
  "serde",
@@ -3925,7 +3925,7 @@ dependencies = [
 
 [[package]]
 name = "uurelaybridge-core"
-version = "1.6.0"
+version = "1.6.1"
 dependencies = [
  "chrono",
  "serde",
