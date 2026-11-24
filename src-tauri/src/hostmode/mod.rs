@@ -87,7 +87,8 @@ impl Default for HostConfig {
         Self {
             enabled: false,
             listen_port: d_port(),
-            domains: Vec::new(),
+            // 预置 UU 远程的六个端点，开箱即可启动
+            domains: uurelaybridge_core::presets::uu_endpoints(),
             fragment_mode: d_mode(),
             fragment_parts: d_parts(),
             dns_server: d_dns(),

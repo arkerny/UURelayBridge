@@ -595,6 +595,27 @@
     $("jsonCancel").addEventListener("click", () => ($("jsonModal").hidden = true));
     $("jsonOk").addEventListener("click", () => guard(applyJson));
 
+    $("btnHostPresetUU").addEventListener("click", () =>
+      guard(async () => {
+        const p = await loadPresets();
+        $("hostDomains").value = (p.uu_endpoints || []).join("\\n");
+        HOST.dirty = true;
+        toast("已填入 UU 远程端点");
+      })
+    );
+
+    $("btnPresetUU").addEventListener("click", () =>
+      guard(async () => {
+        const p = await loadPresets();
+        openRuleModal(null);
+        $("fName").value = "UU 远程";
+        $("fDomains").value = (p.uu_endpoints || []).join("\\n");
+        $("fAction").value = "proxy";
+        syncGroupVisibility();
+        $("fGroup").focus();
+      })
+    );
+
     // Host 模式
     $("btnHostSave").addEventListener("click", () => guard(saveHostConfig));
     $("btnHostStart").addEventListener("click", () => guard(startHost));
@@ -681,6 +702,13 @@
 
   // ------------------------------------------------------------ Host 模式
   const HOST = { view: null, timer: null, dirty: false };
+  let PRESETS = null;
+
+  async function loadPresets() {
+    if (PRESETS || !hasBackend()) return PRESETS;
+    PRESETS = await api("get_presets");
+    return PRESETS;
+  }
 
   async function loadHost() {
     if (!hasBackend()) return;
@@ -894,6 +922,8 @@
       const logs = await api("get_logs", { limit: 250 });
       logs.forEach(addLog);
     });
+    // 放在 guard 之外：applyMode 内部会再走一次 guard，嵌套会被 busy 标志挡掉
+    applyMode();
   }
 
   document.addEventListener("DOMContentLoaded", boot);

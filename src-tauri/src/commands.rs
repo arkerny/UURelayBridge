@@ -391,6 +391,20 @@ pub fn toggle_main_window(app: &AppHandle) {
 use crate::hostmode::{self, HostConfig, HostView};
 use std::sync::Arc;
 
+#[derive(serde::Serialize)]
+pub struct Presets {
+    pub uu_endpoints: Vec<String>,
+    pub uu_suffix: String,
+}
+
+#[tauri::command]
+pub fn get_presets() -> Presets {
+    Presets {
+        uu_endpoints: uurelaybridge_core::presets::uu_endpoints(),
+        uu_suffix: uurelaybridge_core::presets::UU_SUFFIX.to_string(),
+    }
+}
+
 #[tauri::command]
 pub fn host_get(rt: State<'_, AppRuntime>) -> HostView {
     HostView {

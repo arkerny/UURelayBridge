@@ -10,6 +10,7 @@ pub mod compiler;
 pub mod exporter;
 pub mod model;
 pub mod paths;
+pub mod presets;
 pub mod rules;
 pub mod settings;
 pub mod sni;

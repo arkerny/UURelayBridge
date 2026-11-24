@@ -266,7 +266,9 @@ const LAYOUT_PROBE_JS: &str = r#"
         barH: Math.round(document.querySelector('.logbar').getBoundingClientRect().height)
       };
     })(),
-    hostPage: { fields: document.querySelectorAll('#page-host input, #page-host textarea, #page-host select').length },
+    hostPage: { fields: document.querySelectorAll('#page-host input, #page-host textarea, #page-host select').length,
+      domains: (function () { var t = document.getElementById('hostDomains'); if (!t) return []; return t.value.split('\n').filter(Boolean); })(),
+      dns: (document.getElementById('hostDns') || {}).value },
     ui: { bodyClass: document.body.className, mode: (document.querySelector(".mode-btn.active") || {}).dataset ? document.querySelector(".mode-btn.active").dataset.mode : null, visibleTabs: Array.prototype.filter.call(document.querySelectorAll(".tab"), function (t) { return !t.hidden; }).map(function (t) { return t.textContent; }) },
     preview: (function () {
       var t = (document.getElementById('previewBox') || {}).textContent || '';
@@ -290,6 +292,7 @@ pub fn run() {
             commands::bootstrap,
             commands::get_logs,
             commands::frontend_log,
+            commands::get_presets,
             commands::host_get,
             commands::host_set_config,
             commands::host_start,

@@ -77,6 +77,21 @@
 
 **顺序很重要**：先启动转发，再写 hosts。不用时点「移除 Hosts」，或保持程序运行。
 
+### 预置：UU 远程端点
+
+内置了下面 6 个端点（都在 `nrd.nie.163.com` 下），新装即已填好，两个模式各有一个「UU 远程」按钮可一键填入：
+
+```
+api.nrd.nie.163.com            核心控制与房间 API
+api-dcdn.nrd.nie.163.com       DCDN 灾备控制 API
+api-event.nrd.nie.163.com      客户端事件上报 API
+api-ipv4.nrd.nie.163.com       IPv4 远程唤醒与初始化
+sig-3303-d.nrd.nie.163.com     WebSocket 控制信令
+relay-mg-3303-d.nrd.nie.163.com  TURN/TLS 画面中继
+```
+
+只想写一行的话，填 `nrd.nie.163.com` 就能覆盖全部（后缀匹配）。
+
 ### DNS 支持 DoH
 
 「本机转发」页的 DNS 一栏既可以填 `223.5.5.5` 这种明文 DNS，也可以填
