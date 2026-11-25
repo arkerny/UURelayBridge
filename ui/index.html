@@ -20,25 +20,25 @@
     </div>
 
     <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="使用方式">
-      <button class="mode-btn" data-mode="clash">Clash 模式</button>
+      <button class="mode-btn" data-mode="clash">SOCKS 模式</button>
       <button class="mode-btn" data-mode="host">Host 模式</button>
     </div>
 
     <nav class="nav">
-      <button class="nav-item" data-tab="overview" data-for="clash">
+      <button class="nav-item" data-tab="overview" data-for="both">
         <span class="nav-icon" aria-hidden="true">◍</span><span>概览</span>
       </button>
-      <button class="nav-item" data-tab="rules" data-for="clash">
-        <span class="nav-icon" aria-hidden="true">☰</span><span>规则</span>
+      <button class="nav-item" data-tab="config" data-for="both">
+        <span class="nav-icon" aria-hidden="true">⚙</span><span>配置</span>
       </button>
-      <button class="nav-item" data-tab="host" data-for="host">
-        <span class="nav-icon" aria-hidden="true">⌂</span><span>Host 模式</span>
+      <button class="nav-item" data-tab="rules" data-for="both">
+        <span class="nav-icon" aria-hidden="true">☰</span><span>规则</span>
       </button>
       <button class="nav-item" data-tab="logs" data-for="both">
         <span class="nav-icon" aria-hidden="true">≡</span><span>日志</span>
       </button>
       <button class="nav-item" data-tab="settings" data-for="both">
-        <span class="nav-icon" aria-hidden="true">⚙</span><span>设置</span>
+        <span class="nav-icon" aria-hidden="true">⚒</span><span>设置</span>
       </button>
     </nav>
 
@@ -47,6 +47,7 @@
         <span class="dot" id="sideDot"></span>
         <span id="sideText">未运行</span>
       </div>
+      <div class="mode-badge" id="modeBadge">SOCKS</div>
       <div class="muted small" id="sideHint">服务未启动</div>
     </div>
   </aside>
@@ -55,6 +56,7 @@
     <header class="main-head">
       <h1 id="pageTitle">概览</h1>
       <div class="head-actions">
+        <button class="btn tiny ghost" id="btnRestart" title="重启内核">重启内核</button>
         <label class="switch" id="enabledSwitch" title="启动 / 停止本地服务">
           <input type="checkbox" id="toggleEnabled" />
           <span class="slider"></span>
@@ -127,7 +129,7 @@
       </div>
     </section>
 
-    <section class="page" id="page-host">
+    <section class="page" id="page-config">
       <div class="pane-head">
         <h2>Host 模式</h2>
         <div class="pane-actions">
@@ -138,6 +140,20 @@
         </div>
       </div>
 
+      <div class="pane" id="socksPane">
+        <div class="pane-head">
+          <h2>Clash 扩展配置</h2>
+          <div class="pane-actions">
+            <button class="btn" id="btnCopyScript">复制</button>
+            <button class="btn tiny ghost" id="btnExportScript">导出到文件</button>
+          </div>
+        </div>
+        <pre class="code" id="scriptBox">加载中…</pre>
+        <p class="note">粘贴到 Clash Verge → 订阅 → 右键配置 → 编辑扩展脚本。</p>
+      </div>
+
+      <div class="pane" id="hostPane">
+        <div class="pane-head"><h2>本机监听</h2></div>
       <div class="form">
         <label class="field">
           <span>域名</span>
@@ -183,6 +199,7 @@
         <div><span class="muted">Hosts</span><code id="hostHostsState">—</code></div>
         <div><span class="muted">连接 / 分片</span><code id="hostStats">—</code></div>
       </div>
+      </div>
 
       <p class="note">
         Host 模式要监听 80/443，首次开启会让系统弹出管理员确认；
@@ -212,6 +229,8 @@
         <label class="row"><input type="checkbox" id="setStartMin" /><span>启动时隐藏到托盘</span></label>
         <label class="row"><input type="checkbox" id="setCloseToTray" /><span>关闭窗口时隐藏到托盘</span></label>
         <label class="row"><input type="checkbox" id="setNotify" /><span>操作完成显示提示</span></label>
+        <label class="row"><input type="checkbox" id="setAutostart" /><span>开机自动启动</span></label>
+        <label class="row"><input type="checkbox" id="setKeepalive" /><span>内核自动保活（卡死自动重启）</span></label>
         <label class="row"><span>主题</span>
           <select id="setTheme">
             <option value="system">跟随系统</option>

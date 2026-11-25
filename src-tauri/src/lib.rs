@@ -8,7 +8,9 @@ pub mod hostmode;
 pub mod platform;
 pub mod selftest;
 pub mod state;
-pub mod single_instance;
+pub mod autostart;
+pub mod keepalive;
+mod single_instance;
 mod tray;
 
 use std::path::PathBuf;
@@ -447,6 +449,7 @@ pub fn run() {
             commands::host_get,
             commands::host_set_config,
             commands::service_start,
+            commands::restart_service,
             commands::service_stop,
             commands::host_apply_hosts,
             commands::host_clear_hosts,
@@ -527,7 +530,7 @@ pub fn run() {
             }
 
             // 托盘初始化失败不应让 GUI 起不来：记录错误，主窗口仍可用
-            let enabled = handle.state::<state::Runtime>().settings().enabled;
+            let enabled = handle.state::<state::Runtime>().settings().mode_enabled();
             let failed = handle
                 .state::<state::Runtime>()
                 .last()
@@ -590,7 +593,7 @@ pub fn run() {
             // 上次开着开关的话，启动时把服务重新拉起来。
             // 必须放到后台线程：启动内核要等它 bind 端口（数百毫秒），
             // 放在 setup 里会推迟窗口创建，用户看到的是"打开没反应"。
-            if handle.state::<state::Runtime>().settings().enabled {
+            if handle.state::<state::Runtime>().settings().mode_enabled() {
                 let h = handle.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(300));
@@ -613,6 +616,24 @@ pub fn run() {
                     }
                 });
             }
+            // 内核保活：进程意外退出 / 卡死时自动重启
+            {
+                let h = handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    crate::keepalive::run(h);
+                });
+            }
+
+            // 开机自启：同步当前设置到系统
+            {
+                let rt = handle.state::<state::Runtime>();
+                let want = rt.settings().autostart;
+                if let Err(e) = crate::autostart::apply(want) {
+                    commands::log(&handle, "warn", "app", format!("同步开机自启失败：{e}"));
+                }
+            }
+
             // Host 模式端到端自检：--host-selftest <端口> <域名>
             // 启动本地转发 20 秒后退出，供外部脚本验证"解析 SNI → DNS 查真实 IP → 分片转发"。
             if let Some(pos) = std::env::args().position(|a| a == "--host-selftest") {

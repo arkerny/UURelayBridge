@@ -408,7 +408,7 @@ pub fn start_service(app: &AppHandle, rt: &AppRuntime) -> Result<ServiceStatus, 
             "host",
             format!(
                 "服务已启动（{}）：{}",
-                if mode == "host" { "Host 模式" } else { "Clash 模式" },
+                if mode == "host" { "Host 模式" } else { "SOCKS 模式" },
                 st.view()
             ),
         );
@@ -475,7 +475,8 @@ pub fn apply_enabled(app: &AppHandle, enabled: bool, approved: bool, origin: &st
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        s.enabled = enabled;
+        // 两种模式各自记住开关状态
+        s.set_mode_enabled(enabled);
         if let Err(e) = crate::state::settings::save_settings(&rt.paths.settings(), &s) {
             rt.log("error", origin, format!("保存 settings.json 失败：{e}"));
         }
@@ -492,7 +493,7 @@ pub fn apply_enabled(app: &AppHandle, enabled: bool, approved: bool, origin: &st
             }
             // 其它失败：把开关退回，避免界面显示"已开启"却没用
             if let Ok(mut s) = rt.settings.write() {
-                s.enabled = false;
+                s.set_mode_enabled(false);
                 let _ = crate::state::settings::save_settings(&rt.paths.settings(), &s);
             }
         }
@@ -550,7 +551,7 @@ pub fn host_set_config(
     );
 
     // 服务在跑就按新配置重启
-    if rt.settings().enabled {
+    if rt.settings().mode_enabled() {
         stop_service(&rt);
         let _ = start_service(&app, &rt);
         tray::refresh(&app);
@@ -776,38 +777,116 @@ pub fn clear_logs(app: AppHandle, rt: State<'_, AppRuntime>) -> Snapshot {
     build_snapshot(&rt)
 }
 
+/// 切换模式。若当前模式的服务仍在运行，先停掉它（需要调用方确认）。
 #[tauri::command]
 pub fn set_mode(
     mode: String,
+    confirm_stop: bool,
     app: AppHandle,
     rt: State<'_, AppRuntime>,
-) -> Result<Snapshot, CommandError> {
+) -> Result<ModeSwitchOut, CommandError> {
     let mut s = rt.settings();
     let next = if uurelaybridge_core::settings::MODES.contains(&mode.as_str()) {
         mode
     } else {
-        "clash".to_string()
+        "socks".to_string()
     };
-    if s.mode != next {
-        s.mode = next.clone();
-        s.sanitize();
-        crate::state::settings::save_settings(&rt.paths.settings(), &s)
-            .map_err(|e| CommandError::new("io_error", format!("保存设置失败：{e}")))?;
-        if let Ok(mut g) = rt.settings.write() {
-            *g = s;
-        }
-        rt.log(
-            "info",
-            "ui",
-            format!(
-                "使用方式：{}",
-                if next == "host" { "本机转发" } else { "Clash 规则" }
-            ),
-        );
-        tray::refresh(&app);
-        emit_state(&app);
+    if s.mode == next {
+        return Ok(ModeSwitchOut {
+            switched: true,
+            needs_confirm: false,
+            running_mode: None,
+            snapshot: build_snapshot(&rt),
+        });
     }
-    Ok(build_snapshot(&rt))
+
+    // 另一个模式正在跑，必须先关掉
+    let running = hostmode::status().running;
+    if running && !confirm_stop {
+        return Ok(ModeSwitchOut {
+            switched: false,
+            needs_confirm: true,
+            running_mode: Some(s.mode.clone()),
+            snapshot: build_snapshot(&rt),
+        });
+    }
+    if running {
+        stop_service(&rt);
+        rt.log("info", "ui", format!("已停止 {} 模式的服务", s.mode));
+    }
+
+    s.mode = next.clone();
+    s.sanitize();
+    crate::state::settings::save_settings(&rt.paths.settings(), &s)
+        .map_err(|e| CommandError::new("io_error", format!("保存设置失败：{e}")))?;
+    if let Ok(mut g) = rt.settings.write() {
+        *g = s.clone();
+    }
+    rt.log(
+        "info",
+        "ui",
+        format!(
+            "使用方式：{}",
+            if next == "host" { "Host 模式" } else { "SOCKS 模式" }
+        ),
+    );
+
+    // 新模式如果之前是开着的，这里不自动启动，交给用户拨开关
+    tray::refresh(&app);
+    emit_state(&app);
+    Ok(ModeSwitchOut {
+        switched: true,
+        needs_confirm: false,
+        running_mode: None,
+        snapshot: build_snapshot(&rt),
+    })
+}
+
+#[derive(serde::Serialize)]
+pub struct ModeSwitchOut {
+    pub switched: bool,
+    pub needs_confirm: bool,
+    pub running_mode: Option<String>,
+    pub snapshot: Snapshot,
+}
+
+/// 重启内核（同一模式下先停再起）。
+#[tauri::command]
+pub fn restart_service(
+    approved: bool,
+    app: AppHandle,
+    rt: State<'_, AppRuntime>,
+) -> Result<HostView, CommandError> {
+    if !approved {
+        return Err(CommandError::new("needs_approval", "重启内核需要你的确认"));
+    }
+    rt.log("info", "host", "正在重启内核…");
+    stop_service(&rt);
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    match start_service(&app, &rt) {
+        Ok(st) => {
+            rt.log("ok", "host", format!("内核已重启：{}", st.view()));
+            let mut s = match rt.settings.write() {
+                Ok(g) => g,
+                Err(p) => p.into_inner(),
+            };
+            s.set_mode_enabled(true);
+            let _ = crate::state::settings::save_settings(&rt.paths.settings(), &s);
+        }
+        Err(e) => {
+            rt.log("error", "host", format!("重启失败：{e}"));
+            if let Ok(mut s) = rt.settings.write() {
+                s.set_mode_enabled(false);
+                let _ = crate::state::settings::save_settings(&rt.paths.settings(), &s);
+            }
+        }
+    }
+    tray::refresh(&app);
+    emit_state(&app);
+    Ok(HostView {
+        config: rt.host_config(),
+        status: hostmode::status(),
+    })
 }
 
 #[tauri::command]
@@ -1038,7 +1117,7 @@ pub fn log_startup(app: &AppHandle, paths: &AppPaths) {
         "app",
         format!(
             "当前状态：{} · 目标内核：{} · 规则 {} 条",
-            if settings.enabled { "ON" } else { "OFF" },
+            if settings.mode_enabled() { "ON" } else { "OFF" },
             settings.target,
             rt.project().rules.len()
         ),

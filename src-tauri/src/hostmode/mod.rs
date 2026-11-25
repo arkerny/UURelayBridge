@@ -384,5 +384,8 @@ pub fn start(
             None
         };
     }
+    // 注意：这里必须显式释放锁后再调 status()，
+    // 否则 status() 会重入同一把 Mutex 造成死锁（std::sync::Mutex 不可重入）。
+    drop(g);
     Ok(status())
 }

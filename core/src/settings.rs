@@ -25,7 +25,7 @@ fn d_mode() -> String {
 }
 
 /// 使用方式：clash = 生成规则脚本；host = 本机转发
-pub const MODES: [&str; 2] = ["clash", "host"];
+pub const MODES: [&str; 2] = ["socks", "host"];
 
 /// 允许的主题值：system（跟随系统）/ light / dark
 pub const THEME_MODES: [&str; 3] = ["system", "light", "dark"];
@@ -53,6 +53,18 @@ pub struct Settings {
     /// 使用方式：clash / host
     #[serde(default = "d_mode")]
     pub mode: String,
+    /// SOCKS 模式的服务开关（与 host 独立）
+    #[serde(default)]
+    pub enabled_socks: bool,
+    /// Host 模式的服务开关（与 socks 独立）
+    #[serde(default)]
+    pub enabled_host: bool,
+    /// 开机自启
+    #[serde(default)]
+    pub autostart: bool,
+    /// 内核自动保活（卡死时重启）
+    #[serde(default = "d_true")]
+    pub keepalive: bool,
     #[serde(default)]
     pub last_generated_at: Option<String>,
     #[serde(default)]
@@ -76,6 +88,10 @@ impl Default for Settings {
             backup_limit: d_backups(),
             theme: d_theme(),
             mode: d_mode(),
+            enabled_socks: false,
+            enabled_host: false,
+            autostart: false,
+            keepalive: true,
             last_generated_at: None,
             last_generation_ok: None,
         }
@@ -83,6 +99,25 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// 当前模式对应的开关状态（两种模式各自独立）。
+    pub fn mode_enabled(&self) -> bool {
+        if self.mode == "host" {
+            self.enabled_host
+        } else {
+            self.enabled_socks
+        }
+    }
+
+    pub fn set_mode_enabled(&mut self, on: bool) {
+        if self.mode == "host" {
+            self.enabled_host = on;
+        } else {
+            self.enabled_socks = on;
+        }
+        // 兼容字段：跟随当前模式，便于旧逻辑读取
+        self.enabled = on;
+    }
+
     /// 夹紧非法值，避免用户手改坏 JSON 后行为异常。
     pub fn sanitize(&mut self) {
         if !crate::adapters::SUPPORTED_TARGETS.contains(&self.target.as_str()) {

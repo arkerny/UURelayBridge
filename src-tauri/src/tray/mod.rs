@@ -95,7 +95,7 @@ fn on_menu(app: &AppHandle, id: &str) {
 }
 
 fn current_enabled(app: &AppHandle) -> bool {
-    app.state::<AppRuntime>().settings().enabled
+    app.state::<AppRuntime>().settings().mode_enabled()
 }
 
 /// 状态变化后同步菜单文案、勾选与图标。任何失败都只记日志，不 panic。
@@ -106,14 +106,14 @@ pub fn refresh(app: &AppHandle) {
 
     if let Ok(guard) = HANDLES.lock() {
         if let Some(h) = guard.as_ref() {
-            let _ = h.check.set_checked(settings.enabled);
-            let _ = h.status.set_text(menu::status_text(settings.enabled, failed));
-            if let Ok(img) = platform::tray_icon(settings.enabled) {
+            let _ = h.check.set_checked(settings.mode_enabled());
+            let _ = h.status.set_text(menu::status_text(settings.mode_enabled(), failed));
+            if let Ok(img) = platform::tray_icon(settings.mode_enabled()) {
                 let _ = h.tray.set_icon(Some(img));
             }
             let _ = h.tray.set_tooltip(Some(if failed {
                 "UURelayBridge · 上次生成失败"
-            } else if settings.enabled {
+            } else if settings.mode_enabled() {
                 "UURelayBridge · 已启用"
             } else {
                 "UURelayBridge · 已停用"

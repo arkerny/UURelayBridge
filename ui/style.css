@@ -409,3 +409,63 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   .sidebar { width: 164px; flex-basis: 164px; }
   .brand-text span { display: none; }
 }
+
+/* ============================================================================
+   模式区分：SOCKS 用蓝色，Host 用青绿色
+   ========================================================================== */
+body[data-mode="socks"] {
+  --mode: #2f6df6;
+  --mode-weak: #e8f0ff;
+}
+body[data-mode="host"] {
+  --mode: #0d9488;
+  --mode-weak: #e0f5f2;
+}
+[data-theme="dark"] body[data-mode="socks"] { --mode: #4b8bff; --mode-weak: #1e2a44; }
+[data-theme="dark"] body[data-mode="host"]  { --mode: #2dd4bf; --mode-weak: #10302d; }
+
+/* 模式切换按钮跟随模式色 */
+.mode-btn.active {
+  background: var(--mode);
+  color: #fff;
+  box-shadow: none;
+}
+
+/* 导航选中项跟随模式色 */
+.nav-item.active {
+  background: var(--mode-weak);
+  color: var(--mode);
+}
+
+/* 侧栏状态徽标 */
+.mode-badge {
+  display: inline-block;
+  margin-top: 7px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  background: var(--muted);
+  color: #fff;
+}
+.mode-badge.socks { background: #2f6df6; }
+.mode-badge.host  { background: #0d9488; }
+
+/* 主按钮跟随模式色 */
+.btn { background: var(--mode, #2f6df6); }
+.dot.on { background: var(--mode, #16a34a); box-shadow: 0 0 0 3px var(--mode-weak, rgba(22,163,74,.15)); }
+
+/* 配置页：脚本预览 */
+.code {
+  margin: 0;
+  padding: 12px 14px;
+  max-height: 420px;
+  overflow: auto;
+  background: var(--panel-2);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

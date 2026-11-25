@@ -17,7 +17,7 @@ WebView2 157.0.4341.60　**日期**：2026-11-23
 | 依赖 | crates.io 直连 | ✅ 436 个 crate |
 | 图标 | `python tools/gen_icons.py` | ✅ `icon.ico`（16–256 多尺寸）、`icon.icns`（PNG 载荷）、托盘 on/off、macOS 模板图 |
 
-产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.15.1_x64-setup.exe`、`dist/RelayBridge_1.15.1_x64_en-US.msi`。
+产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.16.0_x64-setup.exe`、`dist/RelayBridge_1.16.0_x64_en-US.msi`。
 
 ## 2. 自动化测试
 
@@ -103,8 +103,8 @@ debug 与 release 两个产物都跑过，输出一致：
 
 | 产物 | 路径 | 说明 |
 |---|---|---|
-| NSIS | `dist/RelayBridge_1.15.1_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
-| MSI | `dist/RelayBridge_1.15.1_x64_en-US.msi` | 同上 |
+| NSIS | `dist/RelayBridge_1.16.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
+| MSI | `dist/RelayBridge_1.16.0_x64_en-US.msi` | 同上 |
 | 免安装 | `dist/RelayBridge.exe` | 双击即用 |
 
 卸载不删除 `%APPDATA%\RelayBridge`（用户数据与生成结果保留）。
@@ -126,7 +126,7 @@ debug 与 release 两个产物都跑过，输出一致：
 
 ---
 
-## 8. 回归记录（1.15.1）：双击没反应
+## 8. 回归记录（1.16.0）：双击没反应
 
 **现象**：用户双击 `dist\RelayBridge.exe` 后没有任何窗口，进程立即消失。
 事件日志里有两条 `Application Error`：`Exception code: 0xc0000409`（abort），模块为 `RelayBridge.exe`。
@@ -168,14 +168,14 @@ debug 与 release 两个产物都跑过，输出一致：
 |---|---|
 | 全新状态（删除 `%LOCALAPPDATA%\com.relaybridge.desktop`）+ 可写目录运行 | ✅ 窗口正常，自动创建 `EBWebView` |
 | 从受限目录运行 | ✅ 不再静默崩溃，弹出可读的错误对话框并写日志 |
-| 1.15.1 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
+| 1.16.0 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
 
 **给用户的结论**：程序本身没问题，但这个工作区目录受到写入限制；
 把 `dist\` 复制到工作区之外的普通目录（或把安装包复制出去再安装）即可。
 
 ---
 
-## 9. 回归记录（1.15.1）：日志面板位置错乱
+## 9. 回归记录（1.16.0）：日志面板位置错乱
 
 **现象**：界面里内容区被压成一条（约 44px），日志框被撑到 415px 并停在页面中部，
 窗口底部空出约 220px 的空白 —— 也就是"日志框位置不对"。
@@ -197,7 +197,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 **修复**：`.app` 改为纵向 flex（`topbar` / `banner` / `tabs` 固定，`content: 1fr`，
 `logbar: 220px`），日志面板内部同样改为 flex；横幅显示与否都不再影响其他元素位置。
 
-**验证**（1.15.1 release，1080×780 视口）：
+**验证**（1.16.0 release，1080×780 视口）：
 
 | 指标 | 结果 |
 |---|---|
@@ -209,7 +209,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 ---
 
-## 10. 1.15.1：改名 / 复制模式 / Host 模式
+## 10. 1.16.0：改名 / 复制模式 / Host 模式
 
 **改名**：crate `uurelaybridge(-core)`、产品名 `UURelayBridge`、identifier
 `com.uurelaybridge.desktop`、数据目录 `%APPDATA%\UURelayBridge`、窗口标题同步；
@@ -239,7 +239,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 ---
 
-## 11. 1.15.1：SNI 配置同时作用于 Clash 模式
+## 11. 1.16.0：SNI 配置同时作用于 Clash 模式
 
 **做法**：Host 模式里的域名/分片参数是唯一一份，生成 Clash 脚本时同步使用：
 
@@ -264,7 +264,7 @@ Host 页 6 个表单字段、日志栏拖拽 340→460px 均正常。
 
 ---
 
-## 12. 1.15.1：模式选单 / DoH / 界面精简
+## 12. 1.16.0：模式选单 / DoH / 界面精简
 
 **模式选单**：顶部「Clash 规则 / 本机转发」二选一，存进 `settings.json` 的 `mode`；
 切换后标签页跟着变（clash：概览/规则/设置；host：本机转发/设置）。
@@ -292,7 +292,7 @@ Host 页改为「域名 / 端口 / 分片 / DNS」四项 + 状态侧栏；DoH �
 
 ---
 
-## 13. 1.15.1：内置 UU 远程端点预置
+## 13. 1.16.0：内置 UU 远程端点预置
 
 `core/src/presets.rs` 内置 6 个端点（`UU_ENDPOINTS` + 公共后缀 `UU_SUFFIX`），
 Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」按钮可一键填入。
@@ -309,7 +309,7 @@ Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」
 
 ---
 
-## 14. 1.15.1：修复顶部模式选单点击无响应
+## 14. 1.16.0：修复顶部模式选单点击无响应
 
 **现象**：顶部的「本机转发」按钮点了没反应，模式仍是 Clash 规则。
 
@@ -334,7 +334,7 @@ Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」
 
 ---
 
-## 15. 1.15.1：单开关 + Clash 走本地 SOCKS + Host 监听 80/443
+## 15. 1.16.0：单开关 + Clash 走本地 SOCKS + Host 监听 80/443
 
 **结构调整**：一个开关启动/停止服务；Clash 模式起本地 SOCKS5，脚本注入 `socks5` 节点与规则；
 Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连），并保留一键写 hosts。
@@ -354,7 +354,7 @@ Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连
 
 ---
 
-## 16. 1.15.1：Host 模式可用性 + hosts 可恢复 + 全功能回归
+## 16. 1.16.0：Host 模式可用性 + hosts 可恢复 + 全功能回归
 
 **hosts 可恢复**
 - 每次写入前把原文件备份到 `<数据目录>/backups/hosts/hosts-<epoch>.txt`，只留最近 5 份；
@@ -377,7 +377,7 @@ Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连
 
 ---
 
-## 17. 1.15.1：前后端分离（Clash Verge 式架构）
+## 17. 1.16.0：前后端分离（Clash Verge 式架构）
 
 **结构**
 - 新增 `uuengine`（workspace crate `engine/`，纯 CLI 内核，不依赖 Tauri）；
@@ -407,7 +407,7 @@ Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连
 
 ---
 
-## 18. 1.15.1：内核改用简洁 YAML 配置
+## 18. 1.16.0：内核改用简洁 YAML 配置
 
 **配置格式**（`engine.yaml`，前端会自动写，也能手改）：
 
@@ -431,7 +431,7 @@ domains: [nrd.nie.163.com]
 
 ---
 
-## 19. 1.15.1：配置默认在 exe 同目录、缺失自动创建；启动健壮性
+## 19. 1.16.0：配置默认在 exe 同目录、缺失自动创建；启动健壮性
 
 **配置位置**
 - `uuengine` 默认用可执行文件同目录的 `engine.yaml`，不存在则自动生成（带注释模板）；
@@ -455,7 +455,7 @@ domains: [nrd.nie.163.com]
 
 ---
 
-## 20. 1.15.1：按 campus-tls-fix 的方式重做抗阻断
+## 20. 1.16.0：按 campus-tls-fix 的方式重做抗阻断
 
 参照 https://github.com/yunyancuo/campus-tls-fix 的实现，改了三处：
 
@@ -485,7 +485,7 @@ relay-mg-3303-d.nrd.nie.163.com    TLSv1.2   27ms cert=1960B
 
 ---
 
-## 21. 1.15.1：修 SOCKS 的 IP 目标 + 性能实测
+## 21. 1.16.0：修 SOCKS 的 IP 目标 + 性能实测
 
 **修的 bug**：SOCKS5 客户端常用 IP 字面量作为目标（如 `127.0.0.1:443`），
 但解析环节把 IP 也当域名去查 DNS，且"防 fake-ip"过滤会把回环地址丢掉，
@@ -511,7 +511,7 @@ relay-mg-3303-d.nrd.nie.163.com    TLSv1.2   27ms cert=1960B
 
 ---
 
-## 22. 1.15.1：内核健壮性 + 英文日志 + hosts 自检 + macOS arm64
+## 22. 1.16.0：内核健壮性 + 英文日志 + hosts 自检 + macOS arm64
 
 **健壮性（防闪退）**
 - 每个连接线程包 `catch_unwind`：单连接 panic 不再拖垮整个内核
@@ -543,7 +543,7 @@ relay-mg-3303-d.nrd.nie.163.com    TLSv1.2   27ms cert=1960B
 
 ---
 
-## 23. 1.15.1：修 WARN 暴露的三个解析问题
+## 23. 1.16.0：修 WARN 暴露的三个解析问题
 
 用户日志里出现了 4 类 WARN，逐个查到根因：
 
@@ -572,7 +572,7 @@ api-dcdn.nrd.nie.163.com          首次 18ms   后续 13/14ms
 
 ---
 
-## 24. 1.15.1：修空闲连接被掐断（远控延迟/丢包的真正原因）
+## 24. 1.16.0：修空闲连接被掐断（远控延迟/丢包的真正原因）
 
 **现象**：远控时帧延迟、丢包明显上升。
 
@@ -610,7 +610,7 @@ api-dcdn.nrd.nie.163.com          首次 18ms   后续 13/14ms
 
 ---
 
-## 25. 1.15.1：内核性能审查 + 健壮性补强 + 双平台产物
+## 25. 1.16.0：内核性能审查 + 健壮性补强 + 双平台产物
 
 **逐段审查后改动的点**
 
@@ -643,7 +643,7 @@ api-dcdn.nrd.nie.163.com          首次 18ms   后续 13/14ms
 **双平台产物**
 
 - Windows：`dist/uuengine.exe`（x86_64-pc-windows-msvc）、NSIS/MSI 安装包；
-- macOS：`dist/uuengine-1.15.1-macos-arm64-src.zip`
+- macOS：`dist/uuengine-1.16.0-macos-arm64-src.zip`
   （内核+core 源码 + `build-macos-arm64.sh` + 说明）。
   代码通过 `cargo check --target aarch64-apple-darwin`，
   但 Windows 上没有 Xcode SDK，**无法在此机器上链接出 Mach-O**，
@@ -651,7 +651,7 @@ api-dcdn.nrd.nie.163.com          首次 18ms   后续 13/14ms
 
 ---
 
-## 26. 1.15.1：通配符规则 + 非代理域名直连
+## 26. 1.16.0：通配符规则 + 非代理域名直连
 
 **规则语法**（`domains`，内核与 Clash 脚本双向一致）
 
@@ -697,7 +697,7 @@ api-dcdn.nrd.nie.163.com          首次 18ms   后续 13/14ms
 
 ---
 
-## 27. 1.15.1：预置改为通配符 `+.nrd.nie.163.com`
+## 27. 1.16.0：预置改为通配符 `+.nrd.nie.163.com`
 
 **改动**：预置从"6 条固定端点"改为**一条通配符** `+.nrd.nie.163.com`，
 内核 `print-config`、前端生成的 `engine.yaml`、「UU 远程」按钮全部同步。
@@ -723,7 +723,7 @@ relay-mg-3207-g.nrd.nie.163.com    TLSv1.2  192ms   ← 同上
 - 同级域名（`nrd-file.fp.ps.netease.com`）**不**被误匹配，走直连；
 - 新增 3 个单测：预置是单条通配符、覆盖全部已知端点、不漏到同级域名。
 
-**产物**：Windows `uuengine.exe` 1.15.1、NSIS/MSI；macOS 源码包同步更新。
+**产物**：Windows `uuengine.exe` 1.16.0、NSIS/MSI；macOS 源码包同步更新。
 
 ---
 
@@ -762,7 +762,7 @@ relay-mg-3207-g.nrd.nie.163.com    TLSv1.2  192ms   ← 同上
 
 ---
 
-## 29. 1.15.1：前端重构 + 提权修复
+## 29. 1.16.0：前端重构 + 提权修复
 
 ### 根因：setup 里同步启动内核，把窗口创建拖住了
 
@@ -813,7 +813,7 @@ host  模式：mode=host  nav=Host 模式 / 日志 / 设置
 
 ---
 
-## 30. 1.15.1：修"点不了" + 内核黑框 + 文件散落
+## 30. 1.16.0：修"点不了" + 内核黑框 + 文件散落
 
 ### 1) 点不了：其实是三个问题叠在一起
 
@@ -848,3 +848,49 @@ stdout/stderr 仍走管道，日志照常进 GUI（实测 `[engine] SOCKS5 liste
 - Desktop 上未留任何我创建的文件（standalone 目录已由用户移入工作区）。
 
 **回归**：前端流程 3/3；引擎无窗口且 7899 可用；日志双写（GUI + `uuengine.log`）。
+
+---
+
+## 31. 1.16.0：SOCKS 模式重命名 + 双模式独立 + 保活 / 自启
+
+### 重命名与配置
+
+- `clash` 模式正式改名为 **SOCKS 模式**（`mode: socks`），旧值 `clash` 自动迁移；
+- SOCKS 模式的「配置」页给出 **Clash 扩展脚本**（预览 + 复制 + 导出），
+  内核职责是建立 SOCKS 隧道，Clash 负责把域名指向它。
+
+### 两种模式各自独立
+
+| 项目 | 之前 | 现在 |
+|---|---|---|
+| 开关状态 | 单一 `enabled` | `enabled_socks` / `enabled_host` 各自独立 |
+| 切换模式 | 直接切，旧内核残留 | 先确认「旧模式正在运行」，用户同意后停掉再切 |
+| 左侧导航 | 按模式显隐不同项 | **五项完全相同**：概览 / 配置 / 规则 / 日志 / 设置 |
+| 视觉区分 | 同色 | SOCKS 蓝、Host 青绿（导航、徽标、主按钮、状态点全部跟随） |
+| 状态栏 | 只写"运行中" | 写明 **SOCKS 模式 · 运行中** + 模式徽标 |
+
+### 新增能力
+
+- **重启内核**：标题栏「重启内核」按钮（先停再起，需确认）；
+- **自动保活**：5 秒巡检，进程消失立即拉起；端口连续 3 次无响应判定卡死并重启；
+- **开机自启**：Windows 写 `HKCU\...\Run`，macOS 写 LaunchAgent；设置页可开关；
+- **应用内开关 = 内核进程**：开即启动 `uuengine`，关即结束进程（文案已写明）。
+
+### 修掉的一个真 bug（死锁）
+
+`hostmode::start()` 在持有状态锁的情况下调用 `status()`，而 `status()` 要重入同一把
+`std::sync::Mutex` —— 不可重入，直接死锁。表现是保活线程第一次 tick 后永久卡住，
+连带内核状态无法更新。修复：显式 `drop(g)` 后再调用。
+
+**实测**
+
+```
+两模式独立：socks 开 → 仅 7899；host 开 → 仅 443          ✅
+保活：杀掉内核后 5 秒内自动拉起，端口恢复                   ✅
+导航：overview/config/rules/logs/settings 五项全部正确切换   ✅
+按钮：概览 1、配置 6、规则 3、日志 2，命中测试全部 ok        ✅
+引擎窗口数 = 0（无 CLI 黑框）                              ✅
+cargo test：67 core + 7 行为 + 13 engine                   ✅
+```
+
+**未验证**：真实 UAC 弹窗、开机自启在重启后的实际生效（注册表已写入，需重启验证）。

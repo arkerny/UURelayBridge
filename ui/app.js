@@ -72,11 +72,12 @@
 
   /* ---------------- 模式 / 标签 ---------------- */
   function currentMode() {
-    return S.snap && S.snap.settings.mode === "host" ? "host" : "clash";
+    return S.snap && S.snap.settings.mode === "host" ? "host" : "socks";
   }
 
   function applyMode() {
     const mode = currentMode();
+    document.body.dataset.mode = mode;
     document.querySelectorAll(".mode-btn").forEach((b) => {
       b.classList.toggle("active", b.dataset.mode === mode);
     });
@@ -84,20 +85,28 @@
       const forMode = n.dataset.for || "both";
       n.hidden = forMode !== "both" && forMode !== mode;
     });
-    // 当前标签在新模式下不可见时，切到该模式的首页
-    const active = document.querySelector(".nav-item.active");
-    if (active && active.hidden) {
-      switchTab(mode === "host" ? "host" : "overview");
-    }
+    // 配置页内部：两种模式各自的区块
+    $("socksPane").hidden = mode !== "socks";
+    $("hostPane").hidden = mode !== "host";
+    $("modeBadge").textContent = mode === "host" ? "HOST" : "SOCKS";
+    $("modeBadge").className = "mode-badge " + mode;
+    renderScriptBox();
     if (mode === "host" && hasBackend()) {
       setTimeout(() => guard(loadHost), 0);
     }
   }
 
+  function renderScriptBox() {
+    const box = $("scriptBox");
+    if (!box) return;
+    const text = (S.snap && S.snap.preview) || "";
+    box.textContent = text || "（暂无内容）";
+  }
+
   const TITLES = {
     overview: "概览",
-    rules: "域名规则",
-    host: "Host 模式",
+    config: "配置",
+    rules: "规则",
     logs: "日志",
     settings: "设置",
   };
@@ -137,9 +146,8 @@
     const dot = $("sideDot");
     const running = !!svc.running;
     dot.className = "dot" + (running ? " on" : svc.last_error ? " err" : "");
-    $("sideText").textContent = running
-      ? (currentMode() === "host" ? "Host 模式运行中" : "Clash 模式运行中")
-      : "未运行";
+    const modeName = currentMode() === "host" ? "Host 模式" : "SOCKS 模式";
+    $("sideText").textContent = running ? modeName + " · 运行中" : modeName + " · 未启动";
     $("sideHint").textContent = running
       ? (svc.socks || svc.https || "")
       : (svc.last_error || "服务未启动");
@@ -164,6 +172,8 @@
     $("setStartMin").checked = !!s.start_minimized;
     $("setCloseToTray").checked = !!s.close_to_tray;
     $("setNotify").checked = !!s.show_notifications;
+    $("setAutostart").checked = !!s.autostart;
+    $("setKeepalive").checked = !!s.keepalive;
     $("setTheme").value = s.theme;
     $("setData").textContent = (S.snap.paths || {}).data_dir || "—";
     $("setEngineLog").textContent = (S.snap.paths || {}).data_dir
@@ -327,9 +337,9 @@
       want ? "启动服务" : "停止服务",
       want
         ? (mode === "host"
-            ? "会监听本机 <b>80/443</b>。若当前不是管理员，会弹 UAC 请求提权。"
-            : "会在本机启动 <b>SOCKS5</b> 服务（默认 127.0.0.1:7899），并把配置写进 Clash 脚本。")
-        : "会停止内核进程；Hosts 不会被自动移除。"
+            ? "会启动内核进程并监听本机 <b>80/443</b>。若当前不是管理员，会弹 UAC 请求提权。"
+            : "会启动内核进程并在本机提供 <b>SOCKS5</b>（默认 127.0.0.1:7899）。")
+        : "会<b>结束内核进程</b>；Hosts 不会被自动移除。"
     );
     if (!ok) {
       $("toggleEnabled").checked = !want;
@@ -437,6 +447,8 @@
         start_minimized: $("setStartMin").checked,
         close_to_tray: $("setCloseToTray").checked,
         show_notifications: $("setNotify").checked,
+        autostart: $("setAutostart").checked,
+        keepalive: $("setKeepalive").checked,
         theme: $("setTheme").value,
       });
       S.snap = await api("update_settings", { settings: s, approved: true });
@@ -470,12 +482,50 @@
       if (!btn || btn.dataset.mode === currentMode()) return;
       const next = btn.dataset.mode;
       guard(async () => {
-        S.snap = await api("set_mode", { mode: next });
+        // 第一次尝试：如果旧模式还在跑，后端会要求确认
+        let r = await api("set_mode", { mode: next, confirm_stop: false });
+        if (r.needs_confirm) {
+          const label = r.running_mode === "host" ? "Host 模式" : "SOCKS 模式";
+          const ok = await confirmDialog(
+            "切换模式",
+            "当前 <b>" + label + "</b> 的内核仍在运行。<br/>" +
+            "切换前需要先关闭它，关闭后该模式的连接会立即中断。"
+          );
+          if (!ok) return;
+          r = await api("set_mode", { mode: next, confirm_stop: true });
+        }
+        S.snap = r.snapshot;
         renderAll();
         if (next === "host") await loadHost();
-        toast(next === "host" ? "已切到 Host 模式" : "已切到 Clash 模式");
+        toast(next === "host" ? "已切到 Host 模式" : "已切到 SOCKS 模式");
       });
     });
+
+    $("btnRestart").addEventListener("click", () => guard(async () => {
+      const ok = await confirmDialog("重启内核", "先停止再重新启动当前模式的内核，已建立的连接会断开。");
+      if (!ok) return;
+      HOST.view = await api("restart_service", { approved: true });
+      S.snap = await api("bootstrap");
+      renderAll();
+      renderHost();
+      toast("内核已重启");
+    }));
+
+    $("btnCopyScript").addEventListener("click", () => guard(async () => {
+      const text = (S.snap && S.snap.preview) || "";
+      if (!text) { toast("还没有可复制的内容", "warn"); return; }
+      try {
+        await navigator.clipboard.writeText(text);
+        toast("已复制，粘贴进 Clash Verge 扩展脚本即可", "", 4000);
+      } catch { toast("复制失败", "warn"); }
+    }));
+
+    $("btnExportScript").addEventListener("click", () => guard(async () => {
+      const ok = await confirmDialog("导出脚本", "会写入输出目录，并生成备份与清单。");
+      if (!ok) return;
+      await api("generate", { approved: true });
+      toast("已导出");
+    }));
 
     $("toggleEnabled").addEventListener("change", (ev) => {
       toggleEnabled(ev.target.checked);
