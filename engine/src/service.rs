@@ -137,7 +137,7 @@ fn https_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<
     let Some(sni) = tls::parse_sni(&record) else {
         return Ok(());
     };
-    relay(client, &record, &sni, 443, cfg, stats)
+    relay(client, &record, &sni, &sni, 443, cfg, stats)
 }
 
 fn socks_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<(), String> {
@@ -194,6 +194,9 @@ fn socks_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<
     client
         .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
         .map_err(|e| format!("SOCKS 回复失败：{e}"))?;
+    if cfg.log_connections {
+        log(&format!("SOCKS CONNECT 已回复：{host}:{port}"));
+    }
 
     let mut hdr = [0u8; 5];
     client
@@ -214,7 +217,10 @@ fn socks_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<
     record.extend_from_slice(&body);
 
     let sni = tls::parse_sni(&record).unwrap_or_else(|| host.clone());
-    relay(client, &record, &sni, port, cfg, stats)
+    if cfg.log_connections {
+        log(&format!("SOCKS 目标 {host}:{port} SNI={sni} 首记录 {} 字节", record.len()));
+    }
+    relay(client, &record, &host, &sni, port, cfg, stats)
 }
 
 fn http_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<(), String> {
@@ -260,12 +266,13 @@ fn http_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<(
 fn relay(
     client: TcpStream,
     record: &[u8],
+    connect_host: &str,
     host: &str,
     port: u16,
     cfg: &Config,
     stats: Arc<Stats>,
 ) -> Result<(), String> {
-    let candidates = resolve_candidates(host, &cfg.dns_server);
+    let candidates = resolve_candidates(connect_host, &cfg.dns_server);
     if candidates.is_empty() {
         return Err(format!("{host} 解析失败（没有可用的 A 记录）"));
     }
@@ -340,18 +347,26 @@ fn connect_probe(
     remote
         .write_all(payload)
         .map_err(|e| format!("发送失败：{e}"))?;
+    log(&format!("  已发送首包 {payload_bytes} 字节到 {ip}:{port}", payload_bytes = payload.len()));
 
     remote
         .set_read_timeout(Some(Duration::from_secs(4)))
         .map_err(|e| e.to_string())?;
     let mut buf = [0u8; 8192];
     match remote.read(&mut buf) {
-        Ok(0) => Ok(None),
+        Ok(0) => {
+            log(&format!("  {ip} 立即关闭（EOF）"));
+            Ok(None)
+        }
         Ok(n) => {
+            log(&format!("  {ip} 回应 {n} 字节"));
             remote.set_read_timeout(None).ok();
             Ok(Some((remote, buf[..n].to_vec())))
         }
-        Err(_) => Ok(None),
+        Err(e) => {
+            log(&format!("  {ip} 无回应（{e}）"));
+            Ok(None)
+        }
     }
 }
 
@@ -397,6 +412,10 @@ fn usable(ip: IpAddr) -> bool {
 }
 
 fn resolve_candidates(host: &str, preferred: &str) -> Vec<IpAddr> {
+    // 目标本身是 IP 字面量（SOCKS 客户端常见）：直接连，不做 DNS、不做过滤
+    if let Ok(ip) = host.trim().parse::<IpAddr>() {
+        return vec![ip];
+    }
     let mut out: Vec<IpAddr> = Vec::new();
 
     // 1) 配置里的 DNS（明文或 DoH），取全部 A 记录
