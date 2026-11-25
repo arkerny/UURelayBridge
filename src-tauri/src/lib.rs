@@ -8,7 +8,8 @@ pub mod hostmode;
 pub mod platform;
 pub mod selftest;
 pub mod state;
-pub mod tray;
+pub mod single_instance;
+mod tray;
 
 use std::path::PathBuf;
 
@@ -163,60 +164,86 @@ fn show_error_dialog(message: &str) {
 
 /// 主窗口在这里创建（而不是由配置自动创建），
 /// 这样能先准备好 WebView2 数据目录，避免首次启动 Access denied。
+///
+/// 另外：上一个进程被强杀时，它的 WebView2 子进程可能还占着数据目录
+/// （表现为 0x800700AA / "resource is in use"）。这里会在失败后用带后缀的
+/// 备用目录重试，保证"双击一定能打开"。
 fn create_main_window(app: &tauri::AppHandle, start_hidden: bool) -> tauri::Result<()> {
-    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-        .title("UURelayBridge")
-        .inner_size(1080.0, 780.0)
-        .min_inner_size(920.0, 640.0)
-        .center()
-        .visible(!start_hidden)
-        .resizable(true)
-        .decorations(true);
+    // 便携 / 测试用的显式覆盖优先，其次是默认的本地数据目录
+    let base_dir = env_opt(&["UURELAYBRIDGE_WEBVIEW_DIR", "RELAYBRIDGE_WEBVIEW_DIR"])
+        .map(PathBuf::from)
+        .or_else(|| webview_data_dir(app));
 
-    // 便携 / 测试用的显式覆盖优先，其次是默认的本地数据目录，最后是临时目录
-    let override_dir = env_opt(&["UURELAYBRIDGE_WEBVIEW_DIR", "RELAYBRIDGE_WEBVIEW_DIR"])
-        .map(PathBuf::from);
-
-    match override_dir.or_else(|| webview_data_dir(app)) {
-        Some(dir) => {
-            if let Err(e) = std::fs::create_dir_all(&dir) {
-                log_line(&format!("创建 WebView2 数据目录失败 {}：{e}", dir.display()));
-            } else {
-                log_line(&format!("WebView2 数据目录：{}", dir.display()));
-            }
-            builder = builder.data_directory(dir);
-        }
-        None => log_line("未能解析 WebView2 数据目录，沿用系统默认位置"),
-    }
-
-    // 排障钩子：给 WebView2 传额外的浏览器参数（例如 --remote-debugging-port=9333）
-    if let Some(args) = env_opt(&["UURELAYBRIDGE_WEBVIEW_ARGS", "RELAYBRIDGE_WEBVIEW_ARGS"]) {
-        let t = args.trim();
-        if !t.is_empty() {
-            builder = builder.additional_browser_args(t);
-            log_line(&format!("WebView2 额外参数：{t}"));
+    let mut candidates: Vec<Option<PathBuf>> = vec![base_dir.clone()];
+    if let Some(dir) = &base_dir {
+        for suffix in ["-2", "-3"] {
+            let mut p = dir.clone().into_os_string();
+            p.push(suffix);
+            candidates.push(Some(PathBuf::from(p)));
         }
     }
 
-    let window = match builder.build() {
-        Ok(w) => w,
-        Err(e) => {
-            log_line(&format!("创建窗口失败：{e}"));
-            return Err(e);
+    let mut last_err = None;
+    for (i, dir) in candidates.into_iter().enumerate() {
+        let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            .title("UURelayBridge")
+            .inner_size(1080.0, 780.0)
+            .min_inner_size(920.0, 640.0)
+            .center()
+            .visible(!start_hidden)
+            .resizable(true)
+            .decorations(true);
+
+        match &dir {
+            Some(d) => {
+                if let Err(e) = std::fs::create_dir_all(d) {
+                    log_line(&format!("创建 WebView2 数据目录失败 {}：{e}", d.display()));
+                }
+                log_line(&format!("WebView2 数据目录：{}", d.display()));
+                builder = builder.data_directory(d.clone());
+            }
+            None => log_line("未能解析 WebView2 数据目录，沿用系统默认位置"),
         }
-    };
-    let handle = app.clone();
-    let w = window.clone();
-    window.on_window_event(move |event| {
-        if let WindowEvent::CloseRequested { api, .. } = event {
-            if commands::close_to_tray(&handle) {
-                api.prevent_close();
-                let _ = w.hide();
-                commands::log(&handle, "info", "window", "主窗口已隐藏到托盘，程序继续常驻");
+
+        // 排障钩子：给 WebView2 传额外的浏览器参数（例如 --remote-debugging-port=9333）
+        if let Some(args) = env_opt(&["UURELAYBRIDGE_WEBVIEW_ARGS", "RELAYBRIDGE_WEBVIEW_ARGS"]) {
+            let t = args.trim();
+            if !t.is_empty() {
+                builder = builder.additional_browser_args(t);
+                log_line(&format!("WebView2 额外参数：{t}"));
             }
         }
-    });
-    Ok(())
+
+        match builder.build() {
+            Ok(window) => {
+                if i > 0 {
+                    log_line(&format!("主窗口已用备用数据目录启动（第 {} 次尝试）", i + 1));
+                }
+                let handle = app.clone();
+                let w = window.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        if commands::close_to_tray(&handle) {
+                            api.prevent_close();
+                            let _ = w.hide();
+                            commands::log(
+                                &handle,
+                                "info",
+                                "window",
+                                "主窗口已隐藏到托盘，程序继续常驻",
+                            );
+                        }
+                    }
+                });
+                return Ok(());
+            }
+            Err(e) => {
+                log_line(&format!("创建窗口失败（第 {} 次尝试）：{e}", i + 1));
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| tauri::Error::WindowNotFound))
 }
 
 /// 排障用：读取首屏布局并写进日志。
@@ -311,6 +338,10 @@ const LAYOUT_PROBE_JS: &str = r#"
 "#;
 
 pub fn run() {
+    // 已有实例就把窗口叫到前台，避免抢 WebView2 数据目录导致启动失败
+    if single_instance::claim() {
+        return;
+    }
     let app = tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             commands::bootstrap,

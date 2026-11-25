@@ -293,8 +293,25 @@ pub fn start(
     yaml.push_str(&format!("fragment: {fragment}\n"));
     yaml.push_str(&format!("dns: {}\n", cfg.dns_server));
 
-    let cfg_path = root.join("engine.yaml");
-    std::fs::write(&cfg_path, yaml).map_err(|e| format!("写内核配置失败：{e}"))?;
+    // 配置默认放在内核同目录（引擎自己找的也是这里）；不可写就退回数据目录。
+    // 如果同目录那份被用户手改过（没有生成标记），就不覆盖，改用数据目录那份。
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+    let mut cfg_path = root.join("engine.yaml");
+    if let Some(dir) = exe_dir {
+        let candidate = dir.join("engine.yaml");
+        let ours = match std::fs::read_to_string(&candidate) {
+            Ok(old) => old.contains("由 UURelayBridge 生成") || !old.contains("mode:"),
+            Err(_) => true, // 不存在：可以写
+        };
+        if ours && std::fs::write(&candidate, &yaml).is_ok() {
+            cfg_path = candidate;
+        }
+    }
+    if cfg_path == root.join("engine.yaml") {
+        std::fs::write(&cfg_path, &yaml).map_err(|e| format!("写内核配置失败：{e}"))?;
+    }
 
     let mut child = Command::new(&engine)
         .arg("run")

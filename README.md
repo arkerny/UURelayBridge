@@ -35,7 +35,7 @@
 
 ## 二、架构：前端 + 独立内核
 
-从 1.10.0 起按 Clash Verge 的方式拆开：
+从 1.10.1 起按 Clash Verge 的方式拆开：
 
 ```
 UURelayBridge.exe（前端：界面、配置、hosts 管理、托盘）
@@ -51,13 +51,15 @@ uuengine.exe（内核：数据面，纯 CLI，不依赖 GUI）
 内核自带命令行：
 
 ```bash
+uuengine                              # 用同目录的 engine.yaml（没有就自动建）启动
+uuengine run   [--config engine.yaml]  # 同上，可指定配置
+uuengine check [--config engine.yaml]  # 只校验配置
 uuengine print-config                  # 打一份带注释的默认配置
-uuengine check --config engine.yaml    # 只校验配置
-uuengine run   --config engine.yaml    # 按配置启动
 uuengine version
 ```
 
-配置是 YAML，最少两行就够：
+**配置文件默认就在 `uuengine.exe` 旁边**（`engine.yaml`）。不存在时第一次运行会自动生成一份，
+直接编辑它、重启服务即可；`--config` 可以指到别处。最少两行就够：
 
 ```yaml
 mode: socks

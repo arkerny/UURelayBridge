@@ -17,7 +17,7 @@ WebView2 157.0.4341.60　**日期**：2026-11-23
 | 依赖 | crates.io 直连 | ✅ 436 个 crate |
 | 图标 | `python tools/gen_icons.py` | ✅ `icon.ico`（16–256 多尺寸）、`icon.icns`（PNG 载荷）、托盘 on/off、macOS 模板图 |
 
-产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.10.0_x64-setup.exe`、`dist/RelayBridge_1.10.0_x64_en-US.msi`。
+产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.10.1_x64-setup.exe`、`dist/RelayBridge_1.10.1_x64_en-US.msi`。
 
 ## 2. 自动化测试
 
@@ -103,8 +103,8 @@ debug 与 release 两个产物都跑过，输出一致：
 
 | 产物 | 路径 | 说明 |
 |---|---|---|
-| NSIS | `dist/RelayBridge_1.10.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
-| MSI | `dist/RelayBridge_1.10.0_x64_en-US.msi` | 同上 |
+| NSIS | `dist/RelayBridge_1.10.1_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
+| MSI | `dist/RelayBridge_1.10.1_x64_en-US.msi` | 同上 |
 | 免安装 | `dist/RelayBridge.exe` | 双击即用 |
 
 卸载不删除 `%APPDATA%\RelayBridge`（用户数据与生成结果保留）。
@@ -126,7 +126,7 @@ debug 与 release 两个产物都跑过，输出一致：
 
 ---
 
-## 8. 回归记录（1.10.0）：双击没反应
+## 8. 回归记录（1.10.1）：双击没反应
 
 **现象**：用户双击 `dist\RelayBridge.exe` 后没有任何窗口，进程立即消失。
 事件日志里有两条 `Application Error`：`Exception code: 0xc0000409`（abort），模块为 `RelayBridge.exe`。
@@ -168,14 +168,14 @@ debug 与 release 两个产物都跑过，输出一致：
 |---|---|
 | 全新状态（删除 `%LOCALAPPDATA%\com.relaybridge.desktop`）+ 可写目录运行 | ✅ 窗口正常，自动创建 `EBWebView` |
 | 从受限目录运行 | ✅ 不再静默崩溃，弹出可读的错误对话框并写日志 |
-| 1.10.0 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
+| 1.10.1 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
 
 **给用户的结论**：程序本身没问题，但这个工作区目录受到写入限制；
 把 `dist\` 复制到工作区之外的普通目录（或把安装包复制出去再安装）即可。
 
 ---
 
-## 9. 回归记录（1.10.0）：日志面板位置错乱
+## 9. 回归记录（1.10.1）：日志面板位置错乱
 
 **现象**：界面里内容区被压成一条（约 44px），日志框被撑到 415px 并停在页面中部，
 窗口底部空出约 220px 的空白 —— 也就是"日志框位置不对"。
@@ -197,7 +197,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 **修复**：`.app` 改为纵向 flex（`topbar` / `banner` / `tabs` 固定，`content: 1fr`，
 `logbar: 220px`），日志面板内部同样改为 flex；横幅显示与否都不再影响其他元素位置。
 
-**验证**（1.10.0 release，1080×780 视口）：
+**验证**（1.10.1 release，1080×780 视口）：
 
 | 指标 | 结果 |
 |---|---|
@@ -209,7 +209,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 ---
 
-## 10. 1.10.0：改名 / 复制模式 / Host 模式
+## 10. 1.10.1：改名 / 复制模式 / Host 模式
 
 **改名**：crate `uurelaybridge(-core)`、产品名 `UURelayBridge`、identifier
 `com.uurelaybridge.desktop`、数据目录 `%APPDATA%\UURelayBridge`、窗口标题同步；
@@ -239,7 +239,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 ---
 
-## 11. 1.10.0：SNI 配置同时作用于 Clash 模式
+## 11. 1.10.1：SNI 配置同时作用于 Clash 模式
 
 **做法**：Host 模式里的域名/分片参数是唯一一份，生成 Clash 脚本时同步使用：
 
@@ -264,7 +264,7 @@ Host 页 6 个表单字段、日志栏拖拽 340→460px 均正常。
 
 ---
 
-## 12. 1.10.0：模式选单 / DoH / 界面精简
+## 12. 1.10.1：模式选单 / DoH / 界面精简
 
 **模式选单**：顶部「Clash 规则 / 本机转发」二选一，存进 `settings.json` 的 `mode`；
 切换后标签页跟着变（clash：概览/规则/设置；host：本机转发/设置）。
@@ -292,7 +292,7 @@ Host 页改为「域名 / 端口 / 分片 / DNS」四项 + 状态侧栏；DoH �
 
 ---
 
-## 13. 1.10.0：内置 UU 远程端点预置
+## 13. 1.10.1：内置 UU 远程端点预置
 
 `core/src/presets.rs` 内置 6 个端点（`UU_ENDPOINTS` + 公共后缀 `UU_SUFFIX`），
 Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」按钮可一键填入。
@@ -309,7 +309,7 @@ Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」
 
 ---
 
-## 14. 1.10.0：修复顶部模式选单点击无响应
+## 14. 1.10.1：修复顶部模式选单点击无响应
 
 **现象**：顶部的「本机转发」按钮点了没反应，模式仍是 Clash 规则。
 
@@ -334,7 +334,7 @@ Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」
 
 ---
 
-## 15. 1.10.0：单开关 + Clash 走本地 SOCKS + Host 监听 80/443
+## 15. 1.10.1：单开关 + Clash 走本地 SOCKS + Host 监听 80/443
 
 **结构调整**：一个开关启动/停止服务；Clash 模式起本地 SOCKS5，脚本注入 `socks5` 节点与规则；
 Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连），并保留一键写 hosts。
@@ -354,7 +354,7 @@ Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连
 
 ---
 
-## 16. 1.10.0：Host 模式可用性 + hosts 可恢复 + 全功能回归
+## 16. 1.10.1：Host 模式可用性 + hosts 可恢复 + 全功能回归
 
 **hosts 可恢复**
 - 每次写入前把原文件备份到 `<数据目录>/backups/hosts/hosts-<epoch>.txt`，只留最近 5 份；
@@ -377,7 +377,7 @@ Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连
 
 ---
 
-## 17. 1.10.0：前后端分离（Clash Verge 式架构）
+## 17. 1.10.1：前后端分离（Clash Verge 式架构）
 
 **结构**
 - 新增 `uuengine`（workspace crate `engine/`，纯 CLI 内核，不依赖 Tauri）；
@@ -407,7 +407,7 @@ Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连
 
 ---
 
-## 18. 1.10.0：内核改用简洁 YAML 配置
+## 18. 1.10.1：内核改用简洁 YAML 配置
 
 **配置格式**（`engine.yaml`，前端会自动写，也能手改）：
 
@@ -428,3 +428,27 @@ domains: [nrd.nie.163.com]
 
 **回归**：`tools/e2e.py` 10/10（含前端写 YAML → 内核读取 → 443/7899 可用）。
 `cargo test`：61 单元 + 7 行为 + 6 个内核配置单测。
+
+---
+
+## 19. 1.10.1：配置默认在 exe 同目录、缺失自动创建；启动健壮性
+
+**配置位置**
+- `uuengine` 默认用可执行文件同目录的 `engine.yaml`，不存在则自动生成（带注释模板）；
+- 不覆盖用户手改的那份：内容里没有生成标记时保持原样（`check` 也不会改文件）；
+- 前端开关也优先写到 exe 同目录；目录不可写（如 Program Files）才退回数据目录，
+  且不会覆盖用户手改过的文件。
+
+**启动健壮性**（对应"打开就未响应/打不开"）
+- 单实例：第二个实例不再抢 WebView2 数据目录（那会直接 0x800700AA），
+  而是把已有窗口叫到前台；
+- 窗口创建失败时用 `.desktop-2` / `.desktop-3` 备用数据目录重试，最多 3 次；
+- 启动失败弹窗仍在子线程，主线程不阻塞。
+
+**验证**（`tools/config_location_test.py`，9/9）
+- 无参数直接运行 → 自动生成 `engine.yaml`、7899 可用、日志提示"已创建默认配置"；
+- `check` 无参数也走默认路径并自动创建；
+- 已存在的用户配置不被覆盖；
+- 前端在 exe 同目录生成 `engine.yaml`，服务（443）可用。
+
+`tools/e2e.py` 10/10 保持通过。
