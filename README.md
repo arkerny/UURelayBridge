@@ -35,7 +35,7 @@
 
 ## 二、架构：前端 + 独立内核
 
-从 1.9.0 起按 Clash Verge 的方式拆开：
+从 1.10.0 起按 Clash Verge 的方式拆开：
 
 ```
 UURelayBridge.exe（前端：界面、配置、hosts 管理、托盘）
@@ -51,24 +51,33 @@ uuengine.exe（内核：数据面，纯 CLI，不依赖 GUI）
 内核自带命令行：
 
 ```bash
-uuengine print-config                  # 打一份默认配置
-uuengine check --config engine.json    # 只校验配置
-uuengine run   --config engine.json    # 按配置启动
+uuengine print-config                  # 打一份带注释的默认配置
+uuengine check --config engine.yaml    # 只校验配置
+uuengine run   --config engine.yaml    # 按配置启动
 uuengine version
 ```
 
-最小配置：
+配置是 YAML，最少两行就够：
 
-```json
-{
-  "kind": "socks",
-  "socks_port": 7899,
-  "domains": ["api.nrd.nie.163.com"],
-  "fragment_mode": "record",
-  "fragment_parts": 4,
-  "dns_server": "https://dns.alidns.com/dns-query"
-}
+```yaml
+mode: socks
+domains: [nrd.nie.163.com]
 ```
+
+完整字段（除前两项外都可省略）：
+
+```yaml
+mode: socks        # socks（本机 SOCKS5）| host（监听 80/443）
+domains: [api.nrd.nie.163.com]   # 一个域名也行：domains: nrd.nie.163.com
+socks: 7899        # mode=socks 的端口
+listen: 443        # mode=host 的 TLS 端口
+http: 80           # mode=host 的 HTTP 端口，0 表示不监听
+fragment: 4        # 4 = TLS 记录分 4 段；off = 不分片；tcp:6 = TCP 分段 6 段
+dns: 223.5.5.5     # 也支持 https://dns.alidns.com/dns-query
+```
+
+界面里拨开关时，前端会把这份 YAML 写到数据目录的 `engine.yaml` 再拉起内核；
+你也可以直接改它，重启服务即生效。旧的 `.json` 配置仍能读。
 
 ## 三、界面
 

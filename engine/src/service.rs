@@ -269,9 +269,9 @@ fn relay(
     let _ = remote.set_nodelay(true);
 
     let matched = cfg.matches(host);
-    let fragmented = matched && cfg.fragment_mode != "off";
-    if fragmented && cfg.fragment_mode == "record" {
-        let parts = tls::split_record(record, cfg.fragment_parts as usize);
+    let fragmented = matched && cfg.fragment.mode != "off";
+    if fragmented && cfg.fragment.mode == "record" {
+        let parts = tls::split_record(record, cfg.fragment.parts as usize);
         for p in &parts {
             remote
                 .write_all(p)
@@ -284,7 +284,7 @@ fn relay(
             ));
         }
     } else if fragmented {
-        let parts = tls::segment_chunks(record, cfg.fragment_parts as usize);
+        let parts = tls::segment_chunks(record, cfg.fragment.parts as usize);
         for (i, p) in parts.iter().enumerate() {
             remote
                 .write_all(p)

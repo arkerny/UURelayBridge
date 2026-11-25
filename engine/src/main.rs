@@ -1,27 +1,26 @@
 //! uuengine —— UURelayBridge 的内核（CLI）。
 //!
 //! 用法：
-//!   uuengine run --config <path>     按配置启动（kind = host | socks）
-//!   uuengine check --config <path>   只校验配置，打印结果后退出
-//!   uuengine print-config            打印一份默认配置样例
+//!   uuengine run --config <path>     按配置启动（mode = socks | host）
+//!   uuengine check --config <path>   只校验配置
+//!   uuengine print-config            打印一份带注释的默认配置
 //!   uuengine version                 版本
 //!
-//! 内核只做数据面：监听 / 解析 ClientHello / 按域名分片 / 转发。
-//! 修改 hosts、开关服务、UI 都由前端负责，两者通过配置文件与进程生命周期解耦。
+//! 配置默认是 YAML（`.yaml` / `.yml`）；`.json` 仍然能读，方便老脚本。
 
 mod config;
 mod service;
 
 use std::process::ExitCode;
 
-use config::Config;
+use config::{Config, FileConfig};
 
 fn usage() {
     println!(
         "uuengine {}\n\
          用法:\n  \
-         uuengine run --config <path> [--kind host|socks] [--port N]\n  \
-         uuengine check --config <path>\n  \
+         uuengine run --config <engine.yaml> [--mode host|socks] [--port N]\n  \
+         uuengine check --config <engine.yaml>\n  \
          uuengine print-config\n  \
          uuengine version\n",
         env!("CARGO_PKG_VERSION")
@@ -29,14 +28,14 @@ fn usage() {
 }
 
 fn load(path: &str) -> Result<Config, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("读取配置失败（{path}）：{e}"))?;
-    let mut cfg: Config =
-        serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| {
-            format!("解析配置失败（{path}）：{e}")
-        })?;
-    cfg.sanitize();
-    Ok(cfg)
+    let text = std::fs::read_to_string(path).map_err(|e| format!("读取配置失败（{path}）：{e}"))?;
+    let text = text.trim_start_matches('\u{feff}');
+    let fc: FileConfig = if path.to_ascii_lowercase().ends_with(".json") {
+        serde_json::from_str(text).map_err(|e| format!("解析 JSON 配置失败：{e}"))?
+    } else {
+        serde_yaml::from_str(text).map_err(|e| format!("解析 YAML 配置失败：{e}"))?
+    };
+    Config::from_file(fc)
 }
 
 fn main() -> ExitCode {
@@ -59,12 +58,16 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         "print-config" => {
-            let cfg = Config {
-                kind: "host".to_string(),
+            let mut cfg = Config {
+                kind: "socks".to_string(),
                 domains: uurelaybridge_core::presets::uu_endpoints(),
                 ..Default::default()
             };
-            println!("{}", serde_json::to_string_pretty(&cfg).unwrap_or_default());
+            cfg.sanitize();
+            println!("# 最少只要 mode + domains 两行；下面这些都可以删。");
+            println!("# fragment: 4 表示 TLS 记录分 4 段；off 不分片；tcp:6 用 TCP 分段 6 段。");
+            println!("# dns 支持 223.5.5.5 或 https://dns.alidns.com/dns-query。");
+            print!("{}", cfg.to_yaml());
             ExitCode::SUCCESS
         }
         "check" => {
@@ -77,11 +80,10 @@ fn main() -> ExitCode {
                     let errs = cfg.validate();
                     if errs.is_empty() {
                         println!(
-                            "OK kind={} domains={} mode={} parts={} dns={}",
+                            "OK mode={} domains={} fragment={} dns={}",
                             cfg.kind,
                             cfg.domains.len(),
-                            cfg.fragment_mode,
-                            cfg.fragment_parts,
+                            cfg.fragment.as_yaml(),
                             cfg.dns_server
                         );
                         ExitCode::SUCCESS
@@ -110,8 +112,12 @@ fn main() -> ExitCode {
                     return ExitCode::from(1);
                 }
             };
-            if let Some(kind) = get("--kind") {
-                cfg.kind = kind;
+            if let Some(mode) = get("--mode") {
+                cfg.kind = if mode.eq_ignore_ascii_case("socks") {
+                    "socks".to_string()
+                } else {
+                    "host".to_string()
+                };
             }
             if let Some(port) = get("--port").and_then(|p| p.parse::<u16>().ok()) {
                 if cfg.kind == "socks" {
@@ -128,12 +134,11 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
             service::log(&format!(
-                "启动 v{} kind={} domains={} mode={}x{} dns={}",
+                "启动 v{} mode={} domains={} fragment={} dns={}",
                 env!("CARGO_PKG_VERSION"),
                 cfg.kind,
                 cfg.domains.len(),
-                cfg.fragment_mode,
-                cfg.fragment_parts,
+                cfg.fragment.as_yaml(),
                 cfg.dns_server
             ));
             match service::run(cfg) {

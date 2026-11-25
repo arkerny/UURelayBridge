@@ -273,25 +273,28 @@ pub fn start(
         "找不到内核 uuengine（应与主程序放在同一目录，或在 resources/ 下）".to_string()
     })?;
 
-    // 写内核配置
+    // 写内核配置（YAML，保持简洁，用户也可以手改）
     let kind = if mode == "host" { "host" } else { "socks" };
-    let engine_cfg = serde_json::json!({
-        "kind": kind,
-        "listen_port": cfg.listen_port,
-        "http_port": cfg.http_port,
-        "socks_port": cfg.socks_port,
-        "domains": cfg.domains,
-        "fragment_mode": cfg.fragment_mode,
-        "fragment_parts": cfg.fragment_parts,
-        "dns_server": cfg.dns_server,
-        "log_connections": true,
-    });
-    let cfg_path = root.join("engine.json");
-    std::fs::write(
-        &cfg_path,
-        serde_json::to_string_pretty(&engine_cfg).unwrap_or_default(),
-    )
-    .map_err(|e| format!("写内核配置失败：{e}"))?;
+    let fragment = match cfg.fragment_mode.as_str() {
+        "off" => "off".to_string(),
+        "segment" => format!("tcp:{}", cfg.fragment_parts),
+        _ => cfg.fragment_parts.to_string(),
+    };
+    let mut yaml = String::new();
+    yaml.push_str("# 由 UURelayBridge 生成；可以手改，改完重启服务生效。\n");
+    yaml.push_str(&format!("mode: {kind}\n"));
+    yaml.push_str("domains:\n");
+    for d in &cfg.domains {
+        yaml.push_str(&format!("  - {d}\n"));
+    }
+    yaml.push_str(&format!("socks: {}\n", cfg.socks_port));
+    yaml.push_str(&format!("listen: {}\n", cfg.listen_port));
+    yaml.push_str(&format!("http: {}\n", cfg.http_port));
+    yaml.push_str(&format!("fragment: {fragment}\n"));
+    yaml.push_str(&format!("dns: {}\n", cfg.dns_server));
+
+    let cfg_path = root.join("engine.yaml");
+    std::fs::write(&cfg_path, yaml).map_err(|e| format!("写内核配置失败：{e}"))?;
 
     let mut child = Command::new(&engine)
         .arg("run")
