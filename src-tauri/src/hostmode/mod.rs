@@ -315,12 +315,23 @@ pub fn start(
         std::fs::write(&cfg_path, &yaml).map_err(|e| format!("写内核配置失败：{e}"))?;
     }
 
-    let mut child = Command::new(&engine)
-        .arg("run")
+    let mut cmd = Command::new(&engine);
+    cmd.arg("run")
         .arg("--config")
         .arg(&cfg_path)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    // Windows：内核是控制台程序，不加 CREATE_NO_WINDOW 会弹出一个黑框 CLI 窗口。
+    // 日志走管道进 GUI，不需要那个窗口。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("启动内核失败（{}）：{e}", engine.display()))?;
 

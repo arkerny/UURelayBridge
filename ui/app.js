@@ -103,12 +103,23 @@
   };
 
   function switchTab(name) {
+    const target = document.getElementById("page-" + name);
+    if (!target) return;          // 不存在的页直接忽略，避免空白界面
+    // 目标页不属于当前模式时，回落到该模式的首页。
+    // 注意：不能用 navItem.hidden 判断 —— 点击瞬间它可能还是上一次的旧值。
+    const navItem = document.querySelector('.nav-item[data-tab="' + name + '"]');
+    const forMode = navItem ? (navItem.dataset.for || "both") : "both";
+    if (forMode !== "both" && forMode !== currentMode()) {
+      name = currentMode() === "host" ? "host" : "overview";
+      if (!document.getElementById("page-" + name)) return;
+    }
     S.tab = name;
     document.querySelectorAll(".nav-item").forEach((n) => {
       n.classList.toggle("active", n.dataset.tab === name);
     });
+    const shown = "page-" + name;
     document.querySelectorAll(".page").forEach((p) => {
-      p.classList.toggle("active", p.id === "page-" + name);
+      p.classList.toggle("active", p.id === shown);
     });
     $("pageTitle").textContent = TITLES[name] || "";
   }

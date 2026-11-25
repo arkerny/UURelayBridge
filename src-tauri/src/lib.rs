@@ -308,28 +308,128 @@ const LAYOUT_PROBE_JS: &str = r#"
     })()
   };
   window.__TAURI__.core.invoke('frontend_log', { level: 'info', message: 'LAYOUT ' + JSON.stringify(o) });
-  // 模拟点击「本机转发」，1.5 秒后回报模式与标签
-  try {
-    var hostBtn = document.querySelector('#modeSwitch [data-mode="host"]');
-    if (hostBtn) {
+  // CLICKTEST：先切回第一个可见页，等重排完成后再测
+  setTimeout(function () {
+    window.__CLICK_RESULTS__ = [];
+    var navs = Array.prototype.slice.call(document.querySelectorAll('.nav-item:not([hidden])'));
+    var i = 0;
+    function nextPage() {
+      if (i >= navs.length) {
+        window.__TAURI__.core.invoke('frontend_log', { level: 'info',
+          message: 'CLICKRES ' + JSON.stringify({ clicks: window.__CLICK_RESULTS__, nav: window.__NAV_RESULTS__ }) });
+        return;
+      }
+      navs[i].click();
+      var wantTab = navs[i].dataset.tab;
+      i += 1;
       setTimeout(function () {
-        hostBtn.click();
-        setTimeout(function () {
-          var active = document.querySelector('.mode-btn.active');
-          var tabs = Array.prototype.filter.call(document.querySelectorAll('.nav-item'), function (t) { return !t.hidden; })
-            .map(function (t) { return t.textContent.trim(); });
-          var ta = document.getElementById('hostDomains');
-          var msg = 'MODE ' + JSON.stringify({
-            mode: active ? active.dataset.mode : null,
-            tabs: tabs,
-            page: (document.querySelector('.page.active') || {}).id || null,
-            domains: ta ? ta.value.split('\n').filter(Boolean).length : -1
-          });
-          window.__TAURI__.core.invoke('frontend_log', { level: 'info', message: msg });
-        }, 1500);
-      }, 400);
+        var gotTab = (document.querySelector('.nav-item.active') || {}).dataset
+          ? document.querySelector('.nav-item.active').dataset.tab : null;
+        var gotPage = (document.querySelector('.page.active') || {}).id || null;
+        (window.__NAV_RESULTS__ = window.__NAV_RESULTS__ || []).push(
+          wantTab + '->' + gotTab + '/' + gotPage);
+        runClickTest();
+        setTimeout(nextPage, 120);
+      }, 320);
     }
-  } catch (e) {}
+    nextPage();
+  }, 300);
+
+  function runClickTest() {
+    var out = { hits: {}, modals: {}, clicks: [] };
+
+    function label(el) {
+      if (!el) return "null";
+      return el.tagName + (el.id ? "[" + el.id + "]" : "") + (el.className ? "." + String(el.className).split(" ")[0] : "");
+    }
+
+    // 1) 只测"当前活动页"里的按钮：非活动页 display:none，量不到是正常的
+    var activePage = document.querySelector(".page.active");
+    var pageButtons = activePage
+      ? Array.prototype.slice.call(activePage.querySelectorAll("button")).map(function (b) {
+          return b.id || ("anon-" + String(b.className).split(" ")[0] + "-" + b.textContent.trim().slice(0, 6));
+        })
+      : [];
+    out.activePageId = activePage ? activePage.id : null;
+    out.pageButtons = pageButtons;
+    out.hits = {};
+    out.rects = {};
+
+    (activePage ? Array.prototype.slice.call(activePage.querySelectorAll("button")) : [])
+      .slice(0, 6)
+      .forEach(function (el) {
+        var key = el.id || el.textContent.trim().slice(0, 8);
+        var b = el.getBoundingClientRect();
+        if (b.width === 0 || b.height === 0) {
+          out.hits[key] = "zero-size";
+          return;
+        }
+        var cx = Math.round(b.left + b.width / 2);
+        var cy = Math.round(b.top + b.height / 2);
+        var top = document.elementFromPoint(cx, cy);
+        out.hits[key] = (top === el || el.contains(top)) ? "ok" : "blocked:" + label(top);
+        out.rects[key] = [Math.round(b.x), Math.round(b.y), Math.round(b.width), Math.round(b.height)];
+      });
+
+    // 1.4) page-host 内部结构
+    out.hostTree = (function () {
+      var page = document.getElementById("page-host");
+      if (!page) return "missing";
+      var rows = [];
+      Array.prototype.forEach.call(page.children, function (c) {
+        var b = c.getBoundingClientRect();
+        var cs = getComputedStyle(c);
+        rows.push(c.tagName + "." + String(c.className).split(" ")[0] +
+          " rect=" + [Math.round(b.x), Math.round(b.y), Math.round(b.width), Math.round(b.height)].join(",") +
+          " disp=" + cs.display + " h=" + cs.height + " minH=" + cs.minHeight);
+      });
+      return rows;
+    })();
+
+    // 1.5) 所有 page / nav 的真实状态
+    out.pages = Array.prototype.map.call(document.querySelectorAll(".page"), function (p) {
+      return p.id + ":" + (p.classList.contains("active") ? "ACTIVE" : "-") +
+             ":" + getComputedStyle(p).display +
+             ":h=" + Math.round(p.getBoundingClientRect().height);
+    });
+    out.navState = Array.prototype.map.call(document.querySelectorAll(".nav-item"), function (n) {
+      return n.dataset.tab + ":" + (n.hidden ? "hidden" : "shown") +
+             ":" + (n.classList.contains("active") ? "ACTIVE" : "-");
+    });
+
+    // 2) 模态框初始是否可见（可见就会吞掉所有点击）
+    ["ruleModal", "jsonModal", "confirmModal", "toast"].forEach(function (id) {
+      var el = document.getElementById(id);
+      out.modals[id] = el ? (el.hidden ? "hidden" : "VISIBLE") : "missing";
+    });
+
+    function clickAndReport(id, probe) {
+      var el = document.getElementById(id);
+      if (!el) { out.clicks.push(id + ":missing"); return; }
+      try { el.click(); } catch (e) { out.clicks.push(id + ":throw:" + e.message); return; }
+      setTimeout(function () {
+        out.clicks.push(id + ":" + probe());
+        (window.__CLICK_RESULTS__ = window.__CLICK_RESULTS__ || []).push({
+          page: out.activePageId, hits: out.hits, buttons: out.pageButtons
+        });
+      }, 260);
+    }
+
+    var logBox = document.getElementById("logBox");
+    var before = logBox ? logBox.childElementCount : 0;
+    clickAndReport("btnClearLogs", function () {
+      return (logBox ? logBox.childElementCount : -1) <= before ? "cleared" : "nochange";
+    });
+
+    // 关闭可能打开的弹窗，避免影响后续人工点击
+    setTimeout(function () {
+      ["ruleModal", "jsonModal", "confirmModal"].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.hidden = true;
+      });
+    }, 700);
+  }
+
 })();
 "#;
 

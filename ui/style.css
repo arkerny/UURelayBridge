@@ -185,7 +185,10 @@ html, body {
   overflow-y: auto;
   padding: 0 22px 22px;
 }
-.page.active { display: block; }
+/* 注意：active 页必须参与 flex 布局，否则内部元素量不到高度（rect 全 0，
+   表现为"按钮点不了"）。这里用 flex 而不是 block。 */
+.page.active { display: flex; flex-direction: column; }
+.page.active > * { flex: 0 0 auto; }
 
 /* 卡片 */
 .cards {
