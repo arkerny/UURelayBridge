@@ -120,6 +120,22 @@ impl Settings {
 
     /// 夹紧非法值，避免用户手改坏 JSON 后行为异常。
     pub fn sanitize(&mut self) {
+        // 旧版本的 mode 叫 clash
+        if self.mode == "clash" {
+            self.mode = "socks".to_string();
+        }
+        if !MODES.contains(&self.mode.as_str()) {
+            self.mode = d_mode();
+        }
+        // 旧版本只有一个 enabled 字段：两个新模式开关都还没写过时迁移过来，
+        // 否则老配置文件升级后服务不会自动启动。
+        if !self.enabled_socks && !self.enabled_host && self.enabled {
+            if self.mode == "host" {
+                self.enabled_host = true;
+            } else {
+                self.enabled_socks = true;
+            }
+        }
         if !crate::adapters::SUPPORTED_TARGETS.contains(&self.target.as_str()) {
             self.target = "clash-verge-rev".to_string();
         }
@@ -342,3 +358,38 @@ mod tests {
         std::fs::remove_dir_all(&d).unwrap();
     }
 }
+
+    #[test]
+    fn legacy_enabled_migrates_to_mode_flag() {
+        // 旧配置：只有 enabled，没有 enabled_socks / enabled_host
+        let mut s: Settings = serde_json::from_str(
+            r#"{"schema_version":1,"enabled":true,"mode":"clash","target":"clash-verge-rev"}"#,
+        )
+        .unwrap();
+        s.sanitize();
+        assert_eq!(s.mode, "socks", "clash 应迁移为 socks");
+        assert!(s.enabled_socks, "旧 enabled 应迁移到 enabled_socks");
+        assert!(!s.enabled_host);
+        assert!(s.mode_enabled());
+    }
+
+    #[test]
+    fn legacy_enabled_migrates_to_host_flag() {
+        let mut s: Settings = serde_json::from_str(
+            r#"{"schema_version":1,"enabled":true,"mode":"host"}"#,
+        )
+        .unwrap();
+        s.sanitize();
+        assert!(s.enabled_host);
+        assert!(!s.enabled_socks);
+    }
+
+    #[test]
+    fn explicit_flags_are_not_overwritten_by_legacy_enabled() {
+        let mut s: Settings = serde_json::from_str(
+            r#"{"schema_version":1,"enabled":false,"enabled_socks":true,"mode":"socks"}"#,
+        )
+        .unwrap();
+        s.sanitize();
+        assert!(s.enabled_socks, "已有新模式字段时不应被旧字段覆盖");
+    }

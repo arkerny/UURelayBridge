@@ -894,3 +894,66 @@ cargo test：67 core + 7 行为 + 13 engine                   ✅
 ```
 
 **未验证**：真实 UAC 弹窗、开机自启在重启后的实际生效（注册表已写入，需重启验证）。
+
+---
+
+## 32. 1.16.0 全量验收（UI + 业务逻辑）
+
+### 单元测试
+
+```
+core    : 70 passed（含新增 3 个旧配置迁移用例）
+core 行为: 7 passed
+engine  : 13 passed
+```
+
+### 内核功能
+
+| 项目 | 结果 |
+|---|---|
+| 6 个 UU 端点握手 | ✅ 6/6（TLS1.2/1.3，证书均正常） |
+| 通配符 `*` / `*.` / `+.` / 中间通配 | ✅ 4 组场景 PASS |
+| DoH（AliDNS / DNSPub） | ✅ 2/2 |
+| 畸形输入 / 并发压测 | ✅ 进程存活 |
+| hosts 备份→写入→恢复→移除 | ✅ 字节一致、用户行保留 |
+| YAML 配置校验 / 自动创建 | ✅ 9 例 |
+
+### 命令级业务逻辑（页面上下文直接调用 Tauri 命令）
+
+```
+mode0=socks, running0=true          启动态正确
+needsConfirm=true, switched1=false  旧内核在跑时，未确认 → 拒绝切换 ✅
+switched2=true,  mode2=host         确认后才切换 ✅
+running2=false                      切换时旧内核已停止 ✅
+restartOk=true                      重启内核命令可用 ✅
+```
+
+### UI 点击（逐页命中测试，`elementFromPoint`）
+
+```
+导航：overview/config/rules/logs/settings 五项全部正确切换 ✅
+概览   btnQuickStart                                    ✅
+配置   btnHostSave / ApplyHosts / Restore / ClearHosts
+       btnCopyScript / btnExportScript                   ✅ 6/6
+规则   btnPresetUU / btnJson / btnAddRule               ✅ 3/3
+日志   btnClearLogs / btnOpenLogFile                    ✅ 2/2
+设置   btnSaveSettings / btnOpenData                    ✅ 2/2
+```
+
+**共 14 个按钮，命中全部返回元素自身，无遮挡。**
+
+### 服务行为
+
+| 项目 | 结果 |
+|---|---|
+| 两模式开关独立 | ✅ socks 只开 7899；host 只开 443 |
+| 引擎无 CLI 窗口 | ✅ MainWindowHandle = 0 |
+| 日志双写 | ✅ GUI `[engine]` + 运行目录 `uuengine.log` |
+| 保活（杀掉内核） | ✅ 5 秒内自动拉起，端口恢复 |
+| 开机自启 | ✅ 注册表写入 `"…\UURelayBridge.exe" --autostart` |
+
+### 本轮修掉的问题
+
+1. **旧配置不兼容**：`enabled` 字段未被迁移到 `enabled_socks/host`，
+   导致老配置升级后服务不自动启动。已补迁移 + 3 个单测。
+2. 测试脚本路径仍指向被移走的工作区外目录（23 个脚本），已统一修正。
