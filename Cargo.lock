@@ -3900,6 +3900,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
 
 [[package]]
+name = "uuengine"
+version = "1.9.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uurelaybridge-core",
+]
+
+[[package]]
 name = "uuid"
 version = "1.29.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3913,7 +3922,7 @@ dependencies = [
 
 [[package]]
 name = "uurelaybridge"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "chrono",
  "serde",
@@ -3925,7 +3934,7 @@ dependencies = [
 
 [[package]]
 name = "uurelaybridge-core"
-version = "1.8.0"
+version = "1.9.0"
 dependencies = [
  "chrono",
  "serde",

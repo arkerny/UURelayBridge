@@ -1,0 +1,15 @@
+[package]
+name = "uuengine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "UURelayBridge 内核：本地 SOCKS5 / Host 80-443 转发（CLI）"
+
+[[bin]]
+name = "uuengine"
+path = "src/main.rs"
+
+[dependencies]
+uurelaybridge-core = { path = "../core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

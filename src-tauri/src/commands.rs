@@ -387,7 +387,7 @@ fn host_logger(app: &AppHandle) -> std::sync::Arc<dyn Fn(&str) + Send + Sync> {
     let h = app.clone();
     std::sync::Arc::new(move |m: &str| {
         if let Some(rt) = h.try_state::<AppRuntime>() {
-            rt.log("info", "host", m);
+            rt.log("info", "engine", m);
         }
     })
 }
@@ -396,7 +396,7 @@ fn host_logger(app: &AppHandle) -> std::sync::Arc<dyn Fn(&str) + Send + Sync> {
 pub fn start_service(app: &AppHandle, rt: &AppRuntime) -> Result<ServiceStatus, String> {
     let cfg = rt.host_config();
     let mode = rt.settings().mode;
-    hostmode::start(&mode, cfg, host_logger(app)).map(|st| {
+    hostmode::start(&mode, &cfg, &rt.paths.root, host_logger(app)).map(|st| {
         rt.log(
             "ok",
             "host",

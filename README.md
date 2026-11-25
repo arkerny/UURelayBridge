@@ -33,7 +33,44 @@
 
 ---
 
-## 二、界面
+## 二、架构：前端 + 独立内核
+
+从 1.9.0 起按 Clash Verge 的方式拆开：
+
+```
+UURelayBridge.exe（前端：界面、配置、hosts 管理、托盘）
+        │  写 engine.json / 拉起 / 退出时结束
+        ▼
+uuengine.exe（内核：数据面，纯 CLI，不依赖 GUI）
+```
+
+- 内核两种形态：`kind=socks`（本机 SOCKS5）与 `kind=host`（监听 80/443）；
+- 前端崩溃或重启不会留下半截服务，内核也能脱离界面手动跑；
+- 安装包里两个 exe 会一起装好；便携用法就把两个文件放同一个目录。
+
+内核自带命令行：
+
+```bash
+uuengine print-config                  # 打一份默认配置
+uuengine check --config engine.json    # 只校验配置
+uuengine run   --config engine.json    # 按配置启动
+uuengine version
+```
+
+最小配置：
+
+```json
+{
+  "kind": "socks",
+  "socks_port": 7899,
+  "domains": ["api.nrd.nie.163.com"],
+  "fragment_mode": "record",
+  "fragment_parts": 4,
+  "dns_server": "https://dns.alidns.com/dns-query"
+}
+```
+
+## 三、界面
 
 | 页 | 内容 |
 |---|---|
@@ -45,7 +82,7 @@
 
 ---
 
-## 三、规则模式：复制即用
+## 四、规则模式：复制即用
 
 1. 「规则」页新建规则，例如域名 `nrd.nie.163.com`（后缀匹配，覆盖所有子域），
    动作选「代理到策略组」，填你在 Clash 配置里真实存在的策略组名。
@@ -58,7 +95,7 @@
 
 ---
 
-## 四、Host 模式：本机 80/443 转发
+## 五、Host 模式：本机 80/443 转发
 
 链路：
 
@@ -118,7 +155,7 @@ relay-mg-3303-d.nrd.nie.163.com  TURN/TLS 画面中继
 
 ---
 
-## 五、构建
+## 六、构建
 
 ```powershell
 cd UURelayBridge          # 仓库根目录（workspace）
@@ -131,7 +168,7 @@ macOS 见 [docs/build-macos.md](docs/build-macos.md)（`.app` 必须在 Mac 上�
 
 ---
 
-## 六、数据目录
+## 七、数据目录
 
 ```
 Windows: %APPDATA%\UURelayBridge\
@@ -150,7 +187,7 @@ macOS:   ~/Library/Application Support/UURelayBridge/
 
 ---
 
-## 七、测试
+## 八、测试
 
 ```powershell
 cargo test -p uurelaybridge-core     # 52 单元测试 + 4 个真跑 Node 的脚本行为测试
@@ -168,7 +205,7 @@ cargo run -p uurelaybridge-core --example render_sample
 
 ---
 
-## 八、已知限制
+## 九、已知限制
 
 - 首期只实现 Clash Verge Rev 适配器；Mihomo / sing-box 仍是占位（调用会明确报未实现）。
 - Host 模式的 443 监听：Windows 普通用户可绑；macOS 需要 root。

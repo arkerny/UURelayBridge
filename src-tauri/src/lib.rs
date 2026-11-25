@@ -110,9 +110,11 @@ fn report_fatal(_app: &tauri::AppHandle, message: &str) {
         Some(p) => format!("{message}\n\n详细信息：{}", p.display()),
         None => message.to_string(),
     };
-    show_error_dialog(&text);
-    // 弹窗是阻塞的，用户点掉之后直接结束进程，避免 Tauri 因 setup 失败而 panic
-    std::process::exit(1);
+    // 弹窗放到独立线程：主线程直接返回，避免 Windows 把进程标成"未响应"
+    std::thread::spawn(move || {
+        show_error_dialog(&text);
+        std::process::exit(1);
+    });
 }
 
 #[cfg(windows)]
@@ -345,6 +347,7 @@ pub fn run() {
                 Err(e) => {
                     report_fatal(&handle, &format!("无法确定应用数据目录：{e}"));
                     return Ok(());
+                    return Ok(());
                 }
             };
             let paths = state::AppPaths::new(root);
@@ -438,7 +441,8 @@ pub fn run() {
                                 rt.log("info", "host", m);
                             }
                         });
-                    match hostmode::start("clash", cfg, logger) {
+                    let root = h_main.state::<state::Runtime>().paths.root.clone();
+                    match hostmode::start("clash", &cfg, &root, logger) {
                         Ok(st) => commands::log(
                             &h_main,
                             "ok",
@@ -497,7 +501,8 @@ pub fn run() {
                                 rt.log("info", "host", m);
                             }
                         });
-                    match hostmode::start("host", cfg, logger) {
+                    let root = h_main.state::<state::Runtime>().paths.root.clone();
+                    match hostmode::start("host", &cfg, &root, logger) {
                         Ok(a) => commands::log(
                             &h_main,
                             "ok",
