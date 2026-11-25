@@ -363,15 +363,21 @@ pub struct HostView {
 
 #[derive(serde::Serialize)]
 pub struct Presets {
+    /// 实际用于配置的通配符（单条）
+    pub uu_domains: Vec<String>,
+    /// 展示用的已知端点
     pub uu_endpoints: Vec<String>,
     pub uu_suffix: String,
+    pub uu_pattern: String,
 }
 
 #[tauri::command]
 pub fn get_presets() -> Presets {
     Presets {
+        uu_domains: uurelaybridge_core::presets::uu_domains(),
         uu_endpoints: uurelaybridge_core::presets::uu_endpoints(),
         uu_suffix: uurelaybridge_core::presets::UU_SUFFIX.to_string(),
+        uu_pattern: uurelaybridge_core::presets::UU_PATTERN.to_string(),
     }
 }
 

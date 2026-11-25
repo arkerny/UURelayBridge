@@ -67,7 +67,7 @@ impl Default for HostConfig {
             listen_port: d_port(),
             http_port: d_http_port(),
             socks_port: d_socks_port(),
-            domains: uurelaybridge_core::presets::uu_endpoints(),
+            domains: uurelaybridge_core::presets::uu_domains(),
             fragment_mode: d_mode(),
             fragment_parts: d_parts(),
             dns_server: d_dns(),

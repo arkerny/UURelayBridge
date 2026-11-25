@@ -49,7 +49,7 @@ fn default_config_path() -> PathBuf {
 fn template() -> String {
     let mut cfg = Config {
         kind: "socks".to_string(),
-        domains: uurelaybridge_core::presets::uu_endpoints(),
+        domains: uurelaybridge_core::presets::uu_domains(),
         ..Default::default()
     };
     cfg.sanitize();
