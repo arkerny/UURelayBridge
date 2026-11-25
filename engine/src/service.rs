@@ -367,12 +367,38 @@ fn relay(
 ) -> Result<(), String> {
     let candidates = resolve_candidates(connect_host, &cfg.dns_server);
     if candidates.is_empty() {
-        return Err(format!("{host}: no usable A record"));
+        // 区分"域名不存在"与"解析到 fake-ip 被过滤"，便于排查
+        return Err(if connect_host.parse::<IpAddr>().is_ok() {
+            format!("{host}: invalid target address")
+        } else {
+            format!(
+                "{host}: no usable A record (NXDOMAIN, or only fake-ip/loopback answers)"
+            )
+        });
     }
 
     let matched = cfg.matches(host);
     let fragmented = matched && cfg.fragment.mode != "off";
     let (payload, how) = build_payload(record, cfg, fragmented);
+
+    // 未命中规则：不做分片、不做首字节探测，直接透传（最快路径）
+    if !matched && cfg.direct_passthrough {
+        let ip = candidates[0];
+        let mut remote =
+            TcpStream::connect_timeout(&SocketAddr::new(ip, port), Duration::from_secs(5))
+                .map_err(|e| format!("{host}: connect {ip} failed: {e}"))?;
+        let _ = remote.set_nodelay(true);
+        enable_keepalive(&remote);
+        remote
+            .write_all(record)
+            .map_err(|e| format!("{host}: send failed: {e}"))?;
+        debug(&format!("{host} -> {ip} (direct passthrough)"));
+        let (_, outcome) = pump(client, remote, None, stats);
+        return match outcome {
+            PumpOutcome::Done => Ok(()),
+            PumpOutcome::Failed(e) => Err(e),
+        };
+    }
 
     let mut last = String::from("no usable IP");
     let mut client = Some(client);

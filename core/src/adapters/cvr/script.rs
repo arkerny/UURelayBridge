@@ -102,7 +102,16 @@ pub fn render(input: &RenderInput<'_>) -> String {
     }));
     out.push_str(&format!("  var RB_SOCKS_NAME = {};\n", js_string(&socks_name)));
     out.push_str("  var RB_SNI_RULES = RB_SNI_DOMAINS.map(function (d) {\n");
-    out.push_str("    return \"DOMAIN-SUFFIX,\" + d + \",\" + (RB_SOCKS_PORT ? RB_SOCKS_NAME : \"DIRECT\");\n  });\n\n");
+    out.push_str("    var target = RB_SOCKS_PORT ? RB_SOCKS_NAME : \"DIRECT\";\n");
+    out.push_str("    // 通配符按 Clash 语义换算（星号、星号点子域、加号点子域）\n");
+    out.push_str("    if (d === \"*\") { return \"MATCH,\" + target; }\n");
+    out.push_str("    if (d.indexOf(\"*.\") === 0) { return \"DOMAIN-SUFFIX,\" + d.slice(2) + \",\" + target; }\n");
+    out.push_str("    if (d.indexOf(\"+.\") === 0) { return \"DOMAIN-SUFFIX,\" + d.slice(2) + \",\" + target; }\n");
+    out.push_str("    if (d.indexOf(\"*\") >= 0) {\n");
+    out.push_str("      var rx = d.split(\"*\").map(function (s) { return s.replace(/[.]/g, \"[.]\"); }).join(\"[^.]*\");\n");
+    out.push_str("      return \"DOMAIN-REGEX,^\" + rx + \"$,\" + target;\n");
+    out.push_str("    }\n");
+    out.push_str("    return \"DOMAIN-SUFFIX,\" + d + \",\" + target;\n  });\n\n");
 
     out.push_str("  if (!config || typeof config !== \"object\") {\n    config = {};\n  }\n");
     out.push_str("  var existing = Array.isArray(config.rules) ? config.rules.slice() : [];\n\n");

@@ -11,6 +11,7 @@
 //! 这样双击/命令行直接跑也有配置可用。
 
 mod config;
+mod matcher;
 mod service;
 
 use std::path::{Path, PathBuf};
@@ -55,6 +56,8 @@ fn template() -> String {
     format!(
         "# uuengine 配置（首次运行自动生成，可直接修改）\n\
          # 最少两行就够：mode + domains；其余都可以删。\n\
+         # domains 支持通配符：a.com 含子域 / *.a.com 仅子域 / +.a.com 根域+子域 / * 全部域名。\n\
+         # 未命中规则的域名默认直连透传（direct: false 可关闭）。\n\
          # fragment: 4 表示 TLS 记录分 4 段；off 不分片；tcp:6 用 TCP 分段 6 段。\n\
          # dns 支持 223.5.5.5 或 https://dns.alidns.com/dns-query。\n{}",
         cfg.to_yaml()
@@ -157,6 +160,14 @@ fn do_run(arg_config: Option<String>, mode: Option<String>, port: Option<u16>) -
             );
             return ExitCode::from(3);
         }
+    }
+
+    service::set_debug(cfg.debug_log);
+    if cfg.matches_anything() {
+        service::log_level(
+            "WARN",
+            "domains contains '*': every hostname will be fragmented (IP excluded)",
+        );
     }
 
     service::log(&format!(

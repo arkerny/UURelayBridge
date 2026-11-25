@@ -137,6 +137,12 @@ pub struct FileConfig {
     /// 启动前检查系统 hosts 是否把这些域名指到本机（默认开）
     #[serde(default)]
     pub check_hosts: Option<bool>,
+    /// 日志级别：info（默认）| debug
+    #[serde(default, alias = "log")]
+    pub log_level: Option<String>,
+    /// 未命中规则的域名直接透传（默认 true）
+    #[serde(default)]
+    pub direct: Option<bool>,
 }
 
 /// 运行时配置。
@@ -151,6 +157,10 @@ pub struct Config {
     pub dns_server: String,
     pub log_connections: bool,
     pub check_hosts: bool,
+    /// 未命中规则的域名直接透传（默认 true）
+    pub direct_passthrough: bool,
+    /// 逐连接细节日志（log_level: debug）
+    pub debug_log: bool,
 }
 
 impl Default for Config {
@@ -165,6 +175,8 @@ impl Default for Config {
             dns_server: d_dns(),
             log_connections: true,
             check_hosts: true,
+            direct_passthrough: true,
+            debug_log: false,
         }
     }
 }
@@ -194,6 +206,11 @@ impl Config {
             dns_server: fc.dns.unwrap_or_else(d_dns),
             log_connections: true,
             check_hosts: fc.check_hosts.unwrap_or(true),
+            direct_passthrough: fc.direct.unwrap_or(true),
+            debug_log: fc
+                .log_level
+                .map(|v| v.eq_ignore_ascii_case("debug"))
+                .unwrap_or(false),
         };
         cfg.sanitize();
         Ok(cfg)
@@ -215,17 +232,20 @@ impl Config {
         self.domains = self
             .domains
             .iter()
-            .map(|d| d.trim().trim_start_matches("*.").to_ascii_lowercase())
+            .map(|d| d.trim().trim_end_matches('.').to_ascii_lowercase())
             .filter(|d| !d.is_empty())
             .collect();
         self.domains.dedup();
     }
 
+    /// 命中即表示"这条连接需要做 SNI 分片处理"。
     pub fn matches(&self, host: &str) -> bool {
-        let h = host.trim_end_matches('.').to_ascii_lowercase();
-        self.domains
-            .iter()
-            .any(|d| h == *d || h.ends_with(&format!(".{}", d)))
+        crate::matcher::Matcher::build(&self.domains).matches(host)
+    }
+
+    /// 是否配置了全局通配（`*`），用于启动时提示。
+    pub fn matches_anything(&self) -> bool {
+        crate::matcher::Matcher::build(&self.domains).has_any()
     }
 
     pub fn validate(&self) -> Vec<String> {
