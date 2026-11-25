@@ -176,7 +176,7 @@ fn build_snapshot(rt: &AppRuntime) -> Snapshot {
     }
 }
 
-fn emit_state(app: &AppHandle) {
+pub fn emit_state(app: &AppHandle) {
     let rt = app.state::<AppRuntime>();
     let snap = build_snapshot(&rt);
     let _ = app.emit(STATE_EVENT, snap);
@@ -416,6 +416,47 @@ pub fn start_service(app: &AppHandle, rt: &AppRuntime) -> Result<ServiceStatus, 
     })
 }
 
+/// host 模式需要管理员权限（绑定 80/443）。
+/// 失败时主动弹 UAC，由用户决定是否以管理员身份重启。
+pub fn try_elevate_for_service(app: &AppHandle, err: &str) -> bool {
+    if !err.contains("needs admin") && !err.to_ascii_lowercase().contains("permission") {
+        return false;
+    }
+    let rt = app.state::<AppRuntime>();
+    if rt.settings().mode != "host" {
+        return false;
+    }
+    rt.log(
+        "warn",
+        "host",
+        "host 模式需要管理员权限，正在请求提权（会弹 UAC 确认框）",
+    );
+    // 记录"提权后要接着启动"，新实例启动时读它
+    {
+        let mut s = match rt.settings.write() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        s.enabled = true;
+        let _ = crate::state::settings::save_settings(&rt.paths.settings(), &s);
+    }
+    match hostmode::elevate::relaunch_elevated(&rt.paths.root) {
+        Ok(()) => {
+            rt.log("info", "host", "已请求提权，本实例即将退出");
+            // 让新实例接管，避免两个进程抢数据目录
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                std::process::exit(0);
+            });
+            true
+        }
+        Err(e) => {
+            rt.log("error", "host", format!("提权被取消或失败：{e}"));
+            false
+        }
+    }
+}
+
 pub fn stop_service(rt: &AppRuntime) {
     hostmode::stop();
     rt.log("info", "host", "服务已停止");
@@ -444,7 +485,12 @@ pub fn apply_enabled(app: &AppHandle, enabled: bool, approved: bool, origin: &st
         rt.log("info", origin, "已授权：启动本地服务");
         if let Err(e) = start_service(app, &rt) {
             rt.log("error", origin, format!("启动失败：{e}"));
-            // 起不来就把开关退回，避免界面显示"已开启"却没用
+            // 权限不足：按用户设置主动弹 UAC 提权重启
+            if try_elevate_for_service(app, &e) {
+                drop(guard);
+                return;
+            }
+            // 其它失败：把开关退回，避免界面显示"已开启"却没用
             if let Ok(mut s) = rt.settings.write() {
                 s.enabled = false;
                 let _ = crate::state::settings::save_settings(&rt.paths.settings(), &s);

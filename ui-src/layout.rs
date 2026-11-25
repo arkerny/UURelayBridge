@@ -1,0 +1,316 @@
+//! 前端重构：按 Clash Verge 的布局重做界面。
+//!
+//! 布局：
+//!   左侧栏（固定）：模式切换 + 导航 + 运行状态
+//!   右侧主区：单页面内容（不再有底部日志面板挤压布局）
+//!   日志：独立「日志」页，不再常驻占高度
+//!
+//! 交互主线（与 Clash Verge 一致）：
+//!   顶部大开关 = 启停内核；模式切换决定内核以 socks / host 运行。
+
+use std::path::PathBuf;
+
+/// 生成新的 index.html。
+pub fn render() -> String {
+    let nav = nav_items();
+    format!(
+        r#"<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UURelayBridge</title>
+<link rel="stylesheet" href="style.css" />
+<script src="theme-boot.js"></script>
+</head>
+<body>
+<div class="shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div class="brand-text">
+        <strong>UURelayBridge</strong>
+        <span class="muted small" id="appMeta">加载中…</span>
+      </div>
+    </div>
+
+    <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="使用方式">
+      <button class="mode-btn" data-mode="clash">Clash 模式</button>
+      <button class="mode-btn" data-mode="host">Host 模式</button>
+    </div>
+
+    <nav class="nav">
+{nav}
+    </nav>
+
+    <div class="side-status" id="sideStatus">
+      <div class="status-line">
+        <span class="dot" id="sideDot"></span>
+        <span id="sideText">未运行</span>
+      </div>
+      <div class="muted small" id="sideHint">服务未启动</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="main-head">
+      <h1 id="pageTitle">概览</h1>
+      <div class="head-actions">
+        <label class="switch" id="enabledSwitch" title="启动 / 停止本地服务">
+          <input type="checkbox" id="toggleEnabled" />
+          <span class="slider"></span>
+        </label>
+      </div>
+    </header>
+
+    <section class="page active" id="page-overview">
+      <div class="cards">
+        <div class="card">
+          <div class="card-label">服务</div>
+          <div class="card-value" id="ovService">未启动</div>
+          <div class="card-hint" id="ovServiceHint"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">规则</div>
+          <div class="card-value" id="ovRules">0</div>
+          <div class="card-hint">命中即分片，其余直连</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Hosts</div>
+          <div class="card-value" id="ovHosts">未写入</div>
+          <div class="card-hint" id="ovHostsHint"></div>
+        </div>
+      </div>
+
+      <div class="pane">
+        <div class="pane-head">
+          <h2>快速开始</h2>
+          <div class="pane-actions">
+            <button class="btn tiny ghost" id="btnQuickStart">一键配置</button>
+          </div>
+        </div>
+        <div class="steps" id="quickSteps"></div>
+      </div>
+
+      <div class="pane" id="issuePane" hidden>
+        <div class="pane-head"><h2>检查结果</h2></div>
+        <div class="issues" id="issueBox"></div>
+      </div>
+    </section>
+
+    <section class="page" id="page-rules">
+      <div class="pane-head">
+        <h2>域名规则</h2>
+        <div class="pane-actions">
+          <button class="btn tiny ghost" id="btnPresetUU">填入 UU</button>
+          <button class="btn tiny ghost" id="btnJson">编辑 JSON</button>
+          <button class="btn tiny ghost" id="btnDiscard" hidden>放弃修改</button>
+          <button class="btn" id="btnSaveRules" hidden>保存</button>
+          <button class="btn" id="btnAddRule">新建</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="rules">
+          <thead>
+            <tr>
+              <th style="width:56px">启用</th>
+              <th>名称</th>
+              <th>匹配</th>
+              <th style="width:170px">动作</th>
+              <th style="width:90px"></th>
+            </tr>
+          </thead>
+          <tbody id="rulesBody"></tbody>
+        </table>
+        <div class="empty" id="rulesEmpty">还没有规则。点「新建」，或用「填入 UU」。</div>
+      </div>
+      <div class="hintline">
+        支持通配符：<code>a.com</code> 含子域 · <code>*.a.com</code> 仅子域 ·
+        <code>+.a.com</code> 根域加子域 · <code>*</code> 全部域名。未命中的域名直接直连。
+      </div>
+    </section>
+
+    <section class="page" id="page-host">
+      <div class="pane-head">
+        <h2>Host 模式</h2>
+        <div class="pane-actions">
+          <button class="btn ghost" id="btnHostSave">保存</button>
+          <button class="btn ghost" id="btnHostApplyHosts">写入 Hosts</button>
+          <button class="btn ghost" id="btnHostRestore">恢复原 hosts</button>
+          <button class="btn ghost danger" id="btnHostClearHosts">移除 Hosts</button>
+        </div>
+      </div>
+
+      <div class="form">
+        <label class="field">
+          <span>域名</span>
+          <textarea id="hostDomains" rows="5" spellcheck="false"
+            placeholder="+.nrd.nie.163.com&#10;*.example.com&#10;*"></textarea>
+        </label>
+
+        <div class="grid3">
+          <label class="row"><span>端口</span>
+            <input id="hostPort" type="number" min="1" max="65535" /></label>
+          <label class="row"><span>分片</span>
+            <select id="hostMode">
+              <option value="record">TLS Record</option>
+              <option value="segment">TCP 分段</option>
+              <option value="off">不分片</option>
+            </select></label>
+          <label class="row"><span>段数</span>
+            <input id="hostParts" type="number" min="2" max="12" /></label>
+        </div>
+
+        <div class="grid2">
+          <label class="row"><span>SOCKS 端口</span>
+            <input id="hostSocksPort" type="number" min="1" max="65535" /></label>
+          <label class="row"><span>DNS</span>
+            <input id="hostDns" type="text" spellcheck="false" list="dnsPresets"
+              placeholder="223.5.5.5 或 https://dns.alidns.com/dns-query" /></label>
+        </div>
+        <datalist id="dnsPresets">
+          <option value="https://dns.alidns.com/dns-query">AliDNS · DoH</option>
+          <option value="https://doh.pub/dns-query">DNSPod · DoH</option>
+          <option value="https://cloudflare-dns.com/dns-query">Cloudflare · DoH</option>
+          <option value="223.5.5.5">AliDNS · UDP</option>
+        </datalist>
+
+        <label class="row">
+          <input type="checkbox" id="hostLinkClash" />
+          <span>同一份域名也写进 Clash 脚本</span>
+        </label>
+      </div>
+
+      <div class="kv">
+        <div><span class="muted">监听</span><code id="hostListen">—</code></div>
+        <div><span class="muted">Hosts</span><code id="hostHostsState">—</code></div>
+        <div><span class="muted">连接 / 分片</span><code id="hostStats">—</code></div>
+      </div>
+
+      <p class="note">
+        Host 模式要监听 80/443，首次开启会让系统弹出管理员确认；
+        不用时请「移除 Hosts」，否则这些域名会指向本机。
+      </p>
+    </section>
+
+    <section class="page" id="page-logs">
+      <div class="pane-head">
+        <h2>日志</h2>
+        <div class="pane-actions">
+          <button class="btn tiny ghost" id="btnClearLogs">清空</button>
+          <button class="btn tiny ghost" id="btnOpenLogFile">日志文件</button>
+        </div>
+      </div>
+      <pre class="log" id="logBox"></pre>
+    </section>
+
+    <section class="page" id="page-settings">
+      <div class="pane-head">
+        <h2>设置</h2>
+        <div class="pane-actions">
+          <button class="btn" id="btnSaveSettings">保存</button>
+        </div>
+      </div>
+      <div class="form">
+        <label class="row"><input type="checkbox" id="setStartMin" /><span>启动时隐藏到托盘</span></label>
+        <label class="row"><input type="checkbox" id="setCloseToTray" /><span>关闭窗口时隐藏到托盘</span></label>
+        <label class="row"><input type="checkbox" id="setNotify" /><span>操作完成显示提示</span></label>
+        <label class="row"><span>主题</span>
+          <select id="setTheme">
+            <option value="system">跟随系统</option>
+            <option value="light">浅色</option>
+            <option value="dark">深色</option>
+          </select></label>
+        <div class="row"><span>数据目录</span>
+          <code class="mono small" id="setData">—</code>
+          <button class="btn tiny ghost" id="btnOpenData">打开</button></div>
+        <div class="row"><span>内核日志</span>
+          <code class="mono small" id="setEngineLog">—</code></div>
+      </div>
+      <p class="note">
+        本程序只生成自己的文件，不修改 Clash Verge 的订阅或配置。
+      </p>
+    </section>
+  </main>
+</div>
+
+<div class="modal" id="ruleModal" hidden>
+  <div class="modal-box">
+    <h3 id="ruleTitle">新建规则</h3>
+    <label class="field"><span>名称</span><input id="fName" /></label>
+    <label class="field"><span>匹配域名（每行一个）</span>
+      <textarea id="fDomains" rows="4" spellcheck="false"></textarea></label>
+    <label class="row"><span>动作</span>
+      <select id="fAction">
+        <option value="proxy">代理</option>
+        <option value="direct">直连</option>
+        <option value="block">拦截</option>
+      </select></label>
+    <label class="row" id="fGroupRow"><span>策略组</span><input id="fGroup" /></label>
+    <div class="modal-actions">
+      <button class="btn ghost" id="ruleCancel">取消</button>
+      <button class="btn" id="ruleOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="jsonModal" hidden>
+  <div class="modal-box wide">
+    <h3>编辑 JSON</h3>
+    <textarea id="jsonBox" rows="18" spellcheck="false"></textarea>
+    <div class="modal-actions">
+      <button class="btn ghost" id="jsonCancel">取消</button>
+      <button class="btn" id="jsonOk">应用</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="confirmModal" hidden>
+  <div class="modal-box">
+    <h3 id="confirmTitle">确认</h3>
+    <div class="confirm-body" id="confirmBody"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="confirmCancel">取消</button>
+      <button class="btn" id="confirmOk">确定</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
+"#,
+        nav = nav
+    )
+}
+
+fn nav_items() -> String {
+    let items = [
+        ("overview", "概览", "clash", "◍"),
+        ("rules", "规则", "clash", "☰"),
+        ("host", "Host 模式", "host", "⌂"),
+        ("logs", "日志", "both", "≡"),
+        ("settings", "设置", "both", "⚙"),
+    ];
+    items
+        .iter()
+        .map(|(id, label, for_mode, icon)| {
+            format!(
+                r#"      <button class="nav-item" data-tab="{id}" data-for="{for_mode}">
+        <span class="nav-icon" aria-hidden="true">{icon}</span><span>{label}</span>
+      </button>"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 把生成的页面写到 ui/index.html（构建期工具用）。
+#[allow(dead_code)]
+pub fn write_to(dir: &str) -> std::io::Result<PathBuf> {
+    let path = PathBuf::from(dir).join("index.html");
+    std::fs::write(&path, render())?;
+    Ok(path)
+}

@@ -36,6 +36,14 @@ fn data_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if let Some(t) = env_opt(&["UURELAYBRIDGE_DATA_DIR", "RELAYBRIDGE_DATA_DIR"]) {
         return Ok(PathBuf::from(t));
     }
+    // 提权重启时由旧实例传入，保证两个进程用同一份数据目录
+    if let Some(pos) = std::env::args().position(|a| a == "--data-dir") {
+        if let Some(dir) = std::env::args().nth(pos + 1) {
+            if !dir.trim().is_empty() {
+                return Ok(PathBuf::from(dir));
+            }
+        }
+    }
     let base = app
         .path()
         .data_dir()
@@ -272,44 +280,32 @@ const LAYOUT_PROBE_JS: &str = r#"
   var o = {
     theme: document.documentElement.getAttribute('data-theme'),
     vp: { w: innerWidth, h: innerHeight, dpr: devicePixelRatio },
-    topbar: r('.topbar'), banner: r('.subtle-banner'), tabs: r('.tabs'),
-    content: r('.content'), logbar: r('.logbar'), loghead: r('.logbar-head'), log: r('.log'),
+    sidebar: r('.sidebar'), nav: r('.nav'), page: r('.page.active'),
+    status: r('.side-status'), log: r('#logBox'),
     logScroll: log ? { sh: log.scrollHeight, ch: log.clientHeight,
-                       sbw: log.offsetWidth - log.clientWidth, lines: log.children.length,
-                       scrollTop: log.scrollTop,
-                       right: Math.round(log.getBoundingClientRect().right) } : null,
+                       sbw: log.offsetWidth - log.clientWidth, lines: log.children.length } : null,
     bodyBg: getComputedStyle(document.body).backgroundColor,
-    codeBg: getComputedStyle(document.documentElement).getPropertyValue('--code-bg').trim(),
     sheets: Array.prototype.map.call(document.styleSheets, function (s) { return s.href || 'inline'; }),
-    resize: (function () {
-      var before = getComputedStyle(document.documentElement).getPropertyValue('--logbar-h').trim();
-      var handle = document.getElementById('logResize');
-      try {
-        handle.dispatchEvent(new PointerEvent('pointerdown', { clientY: 600, pointerId: 1, bubbles: true }));
-        handle.dispatchEvent(new PointerEvent('pointermove', { clientY: 480, pointerId: 1, bubbles: true }));
-        handle.dispatchEvent(new PointerEvent('pointerup', { clientY: 480, pointerId: 1, bubbles: true }));
-      } catch (e) { return { error: String(e) }; }
-      return {
-        before: before,
-        after: getComputedStyle(document.documentElement).getPropertyValue('--logbar-h').trim(),
-        barH: Math.round(document.querySelector('.logbar').getBoundingClientRect().height)
-      };
-    })(),
     hostPage: { fields: document.querySelectorAll('#page-host input, #page-host textarea, #page-host select').length,
-      domains: (function () { var t = document.getElementById('hostDomains'); if (!t) return []; return t.value.split('\n').filter(Boolean); })(),
+      domains: (function () { var t = document.getElementById('hostDomains'); return t ? t.value.split('\n').filter(Boolean) : []; })(),
       dns: (document.getElementById('hostDns') || {}).value },
-    ui: { bodyClass: document.body.className, mode: (document.querySelector(".mode-btn.active") || {}).dataset ? document.querySelector(".mode-btn.active").dataset.mode : null, visibleTabs: Array.prototype.filter.call(document.querySelectorAll(".tab"), function (t) { return !t.hidden; }).map(function (t) { return t.textContent; }) },
+    ui: {
+      mode: (document.querySelector('.mode-btn.active') || {}).dataset
+        ? document.querySelector('.mode-btn.active').dataset.mode : null,
+      activeTab: (document.querySelector('.nav-item.active') || {}).dataset
+        ? document.querySelector('.nav-item.active').dataset.tab : null,
+      visibleNav: Array.prototype.filter.call(document.querySelectorAll('.nav-item'),
+        function (n) { return !n.hidden; }).map(function (n) { return n.textContent.trim(); }),
+      pageShown: Array.prototype.filter.call(document.querySelectorAll('.page'),
+        function (p) { return p.classList.contains('active'); }).map(function (p) { return p.id; }),
+      toggleChecked: (document.getElementById('toggleEnabled') || {}).checked,
+      cards: document.querySelectorAll('.card').length,
+      steps: document.querySelectorAll('.step').length
+    },
     preview: (function () {
-      var t = (document.getElementById('previewBox') || {}).textContent || '';
+      var t = window.__LAST_PREVIEW__ || '';
       return { sni: t.indexOf('RB_SNI_DOMAINS') >= 0, hosts: t.indexOf('hosts[d]') >= 0, socks: t.indexOf('RB_SOCKS_PORT') >= 0, len: t.length };
-    })(),
-    logbarParent: document.querySelector('.logbar') ? document.querySelector('.logbar').parentElement.className : null,
-    contentParent: document.querySelector('.content') ? document.querySelector('.content').parentElement.className : null,
-    appKids: Array.prototype.map.call(document.querySelector('.app').children, function (e) {
-      var b = e.getBoundingClientRect();
-      return { tag: e.tagName, cls: e.className, y: Math.round(b.y), h: Math.round(b.height) };
-    }),
-    rowsCss: getComputedStyle(document.querySelector('.app')).gridTemplateRows
+    })()
   };
   window.__TAURI__.core.invoke('frontend_log', { level: 'info', message: 'LAYOUT ' + JSON.stringify(o) });
   // 模拟点击「本机转发」，1.5 秒后回报模式与标签
@@ -320,7 +316,7 @@ const LAYOUT_PROBE_JS: &str = r#"
         hostBtn.click();
         setTimeout(function () {
           var active = document.querySelector('.mode-btn.active');
-          var tabs = Array.prototype.filter.call(document.querySelectorAll('.tab'), function (t) { return !t.hidden; })
+          var tabs = Array.prototype.filter.call(document.querySelectorAll('.nav-item'), function (t) { return !t.hidden; })
             .map(function (t) { return t.textContent.trim(); });
           var ta = document.getElementById('hostDomains');
           var msg = 'MODE ' + JSON.stringify({
@@ -491,21 +487,31 @@ pub fn run() {
                     std::process::exit(0);
                 });
             }
-            // 上次开着开关的话，启动时把服务重新拉起来
+            // 上次开着开关的话，启动时把服务重新拉起来。
+            // 必须放到后台线程：启动内核要等它 bind 端口（数百毫秒），
+            // 放在 setup 里会推迟窗口创建，用户看到的是"打开没反应"。
             if handle.state::<state::Runtime>().settings().enabled {
-                match commands::start_service(&handle, &handle.state::<state::Runtime>()) {
-                    Ok(st) => commands::log(&handle, "ok", "host", format!("已按上次状态启动服务：{}", st.view())),
-                    Err(e) => {
-                        commands::log(&handle, "error", "host", format!("启动服务失败：{e}"));
-                        if let Ok(mut s) = handle.state::<state::Runtime>().settings.write() {
-                            s.enabled = false;
-                            let _ = state::settings::save_settings(
-                                &handle.state::<state::Runtime>().paths.settings(),
-                                &s,
-                            );
+                let h = handle.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    let rt = h.state::<state::Runtime>();
+                    match commands::start_service(&h, &rt) {
+                        Ok(st) => commands::log(
+                            &h,
+                            "ok",
+                            "host",
+                            format!("已按上次状态启动服务：{}", st.view()),
+                        ),
+                        Err(e) => {
+                            commands::log(&h, "error", "host", format!("启动服务失败：{e}"));
+                            if let Ok(mut s) = rt.settings.write() {
+                                s.enabled = false;
+                                let _ = state::settings::save_settings(&rt.paths.settings(), &s);
+                            }
+                            commands::emit_state(&h);
                         }
                     }
-                }
+                });
             }
             // Host 模式端到端自检：--host-selftest <端口> <域名>
             // 启动本地转发 20 秒后退出，供外部脚本验证"解析 SNI → DNS 查真实 IP → 分片转发"。

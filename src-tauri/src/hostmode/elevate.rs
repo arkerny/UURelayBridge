@@ -158,3 +158,82 @@ pub fn wait_result(data_dir: &Path, timeout: Duration) -> Result<OpResult, Strin
     }
     Err("等待管理员操作结果超时".to_string())
 }
+
+/// 以管理员身份重新启动本程序（GUI），用于 host 模式绑定 80/443。
+/// 当前实例应由调用方在成功后退出。
+pub fn relaunch_elevated(data_dir: &Path) -> Result<(), String> {
+    run_self_elevated(data_dir)
+}
+
+#[cfg(windows)]
+fn run_self_elevated(data_dir: &Path) -> Result<(), String> {
+    use std::ffi::c_void;
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteW(
+            hwnd: *mut c_void,
+            op: *const u16,
+            file: *const u16,
+            params: *const u16,
+            dir: *const u16,
+            show: i32,
+        ) -> isize;
+    }
+
+    let exe = std::env::current_exe().map_err(|e| format!("取自身路径失败：{e}"))?;
+    let params = format!("--elevated --data-dir \"{}\"", data_dir.display());
+
+    fn wide(s: &str) -> Vec<u16> {
+        OsStr::new(s).encode_wide().chain(std::iter::once(0)).collect()
+    }
+    let op = wide("runas");
+    let file = wide(&exe.to_string_lossy());
+    let prm = wide(&params);
+    let dir = wide(&data_dir.to_string_lossy());
+
+    let r = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            op.as_ptr(),
+            file.as_ptr(),
+            prm.as_ptr(),
+            dir.as_ptr(),
+            1,
+        )
+    };
+    if (r as isize) <= 32 {
+        return Err("提权被取消（UAC）".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn run_self_elevated(data_dir: &Path) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| format!("取自身路径失败：{e}"))?;
+    let cmd = format!(
+        "\"{}\" --elevated --data-dir \"{}\"",
+        exe.display(),
+        data_dir.display()
+    );
+    let script = format!(
+        "do shell script \"{}\" with administrator privileges",
+        cmd.replace('\\', "\\\\").replace('"', "\\\"")
+    );
+    let status = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .status()
+        .map_err(|e| format!("调用 osascript 失败：{e}"))?;
+    if !status.success() {
+        return Err("提权被取消或失败".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn run_self_elevated(_data_dir: &Path) -> Result<(), String> {
+    Err("当前平台不支持自动提权".to_string())
+}
