@@ -34,6 +34,7 @@ fn log_path() -> std::path::PathBuf {
 static DEBUG_ON: AtomicU64 = AtomicU64::new(0);
 
 /// 打开 DEBUG 级别（配置里 log_level: debug 时调用）。
+#[allow(dead_code)]
 pub fn set_debug(on: bool) {
     DEBUG_ON.store(if on { 1 } else { 0 }, Ordering::Relaxed);
 }
@@ -64,14 +65,30 @@ pub fn log_level(level: &str, msg: &str) {
     println!("{line}");
     let _ = std::io::stdout().flush();
 
-    // 日志文件：运行目录不可写时静默跳过（例如装到 Program Files）
+    // 日志文件：进程内保持一个追加句柄（避免每条日志 open/close）；
+    // 打开失败（例如装到 Program Files）就只输出到 stdout。
     use std::io::Write as _;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(log_path())
-    {
-        let _ = writeln!(f, "{line}");
+    static FILE: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
+    let slot = FILE.get_or_init(|| {
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_path())
+            .ok();
+        Mutex::new(f)
+    });
+    if let Ok(mut g) = slot.lock() {
+        if g.is_none() {
+            *g = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_path())
+                .ok();
+        }
+        if let Some(f) = g.as_mut() {
+            let _ = writeln!(f, "{line}");
+            let _ = f.flush();
+        }
     }
 }
 
@@ -132,20 +149,23 @@ fn accept_loop(
     stats: Arc<Stats>,
     kind: Kind,
 ) -> Result<(), String> {
+    // 阻塞 accept：不忙等、不占 CPU。停止进程时由操作系统回收监听套接字。
     for stream in listener.incoming() {
         match stream {
             Ok(s) => {
                 stats.conns.fetch_add(1, Ordering::Relaxed);
                 let cfg = cfg.clone();
-                let stats = stats.clone();
-                std::thread::spawn(move || {
+                let conn_stats = stats.clone();
+                let failed_stats = stats.clone();
+                let builder = std::thread::Builder::new().stack_size(256 * 1024);
+                let spawned = builder.spawn(move || {
                     let _ = s.set_nonblocking(false);
-                    // 单个连接出任何意外都不允许拖垮整个内核
+                    let _ = s.set_nodelay(true);
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         match kind {
-                            Kind::Socks => socks_conn(s, &cfg, stats.clone()),
-                            Kind::Https => https_conn(s, &cfg, stats.clone()),
-                            Kind::Http => http_conn(s, &cfg, stats.clone()),
+                            Kind::Socks => socks_conn(s, &cfg, conn_stats.clone()),
+                            Kind::Https => https_conn(s, &cfg, conn_stats.clone()),
+                            Kind::Http => http_conn(s, &cfg, conn_stats.clone()),
                         }
                     }))
                     .unwrap_or_else(|_| {
@@ -153,14 +173,28 @@ fn accept_loop(
                         Ok(())
                     });
                     if let Err(e) = r {
-                        stats.failed.fetch_add(1, Ordering::Relaxed);
+                        conn_stats.failed.fetch_add(1, Ordering::Relaxed);
                         log_level("WARN", &format!("connection failed: {e}"));
                     }
                 });
+                if spawned.is_err() {
+                    // 极端并发下线程创建失败：记录告警，避免连接被静默丢弃
+                    log_level("WARN", "cannot spawn handler thread; connection dropped");
+                    failed_stats.failed.fetch_add(1, Ordering::Relaxed);
+                }
             }
             Err(e) => {
+                // 单个连接出错不应导致整个监听退出
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::Interrupted
+                ) {
+                    continue;
+                }
                 log_level("WARN", &format!("accept failed: {e}"));
-                std::thread::sleep(Duration::from_millis(150));
+                std::thread::sleep(Duration::from_millis(50));
             }
         }
     }
@@ -315,7 +349,11 @@ fn http_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<(
         .write_all(&buf)
         .map_err(|e| format!("forward HTTP request failed: {e}"))?;
     log(&format!("{host} -> {ip}:80 (HTTP direct)"));
-    pump(client, remote, None, stats)
+    let (_, outcome) = pump(client, remote, None, stats);
+    match outcome {
+        PumpOutcome::Done => Ok(()),
+        PumpOutcome::Failed(e) => Err(e),
+    }
 }
 
 fn relay(
@@ -337,7 +375,9 @@ fn relay(
     let (payload, how) = build_payload(record, cfg, fragmented);
 
     let mut last = String::from("no usable IP");
+    let mut client = Some(client);
     for (idx, ip) in candidates.iter().enumerate() {
+        let Some(c) = client.take() else { break };
         match connect_probe(&payload, *ip, port) {
             Ok(Some((remote, first))) => {
                 if cfg.log_connections {
@@ -346,19 +386,32 @@ fn relay(
                 if matched {
                     stats.fragmented.fetch_add(1, Ordering::Relaxed);
                 }
-                return pump(client, remote, Some(first), stats);
+                let (back, outcome) = pump(c, remote, Some(first), stats.clone());
+                match outcome {
+                    PumpOutcome::Done => return Ok(()),
+                    PumpOutcome::Failed(e) => {
+                        // 还没给客户端写过数据 → 这条线路不可用，换下一个候选
+                        mark_bad(host, *ip);
+                        log_level("WARN", &format!("{host}: {ip} unusable ({e})"));
+                        last = e;
+                        client = Some(back);
+                    }
+                }
             }
             Ok(None) => {
                 mark_bad(host, *ip);
-                log_level("WARN", &format!("{host}: no response from {ip}, trying next candidate"));
+                log_level("WARN", &format!("{host}: no response from {ip}"));
                 last = format!("{ip} no response");
+                client = Some(c);
             }
             Err(e) => {
-                log_level("WARN", &format!("{host}: connect to {ip} failed: {e}"));
+                mark_bad(host, *ip);
+                log_level("WARN", &format!("{host}: {e} ({ip})"));
                 last = e;
+                client = Some(c);
             }
         }
-        if idx + 1 < candidates.len() && cfg.log_connections {
+        if idx + 1 < candidates.len() {
             debug(&format!("{host}: retry candidate #{}", idx + 2));
         }
     }
@@ -390,44 +443,117 @@ fn build_payload(record: &[u8], cfg: &Config, fragmented: bool) -> (Vec<u8>, Str
     }
 }
 
-/// 连一个候选 IP、把首包发出去，然后等服务器的第一个字节。
-/// 返回 Some((连接, 已读到的字节)) 表示这条线路是通的。
-fn connect_probe(
-    payload: &[u8],
-    ip: IpAddr,
-    port: u16,
-) -> Result<Option<(TcpStream, Vec<u8>)>, String> {
+/// 连一个候选 IP 并发出首包。
+///
+/// 不在这里等服务器响应：等待会额外增加一个 RTT 量级的延迟，而且对
+/// "连接成功但服务器慢" 的正常情况是纯浪费。线路是否真的可用，交给
+/// 后续真实读操作判断（读不到数据就是不可用，此时换下一个候选）。
+fn connect_send(payload: &[u8], ip: IpAddr, port: u16) -> Result<TcpStream, String> {
     let mut remote = TcpStream::connect_timeout(&SocketAddr::new(ip, port), Duration::from_secs(5))
         .map_err(|e| format!("connect failed: {e}"))?;
     let _ = remote.set_nodelay(true);
+    // 开启 keepalive：防止中间设备静默丢弃长连接状态
+    enable_keepalive(&remote);
     remote
         .write_all(payload)
         .map_err(|e| format!("send failed: {e}"))?;
-    debug(&format!("  probe sent {}B to {ip}:{port}", payload.len()));
+    Ok(remote)
+}
 
+/// 连上并发出首包后，等服务器的第一个字节（超时 2.5s）。
+/// 返回 Ok(None) 表示这条线路不可用（黑洞/瞬断），应换下一个候选。
+fn connect_probe(payload: &[u8], ip: IpAddr, port: u16) -> Result<Option<(TcpStream, Vec<u8>)>, String> {
+    let mut remote = connect_send(payload, ip, port)?;
     remote
         .set_read_timeout(Some(Duration::from_millis(2500)))
         .map_err(|e| e.to_string())?;
     let mut buf = [0u8; 8192];
-    match remote.read(&mut buf) {
-        Ok(0) => {
-            log_level("WARN", &format!("  {ip} closed immediately (EOF)"));
-            Ok(None)
-        }
-        Ok(n) => {
-            debug(&format!("  {ip} replied {n}B"));
-            remote.set_read_timeout(None).ok();
-            Ok(Some((remote, buf[..n].to_vec())))
-        }
-        Err(e) => {
-            log_level("WARN", &format!("  {ip} no reply ({e})"));
-            remote.set_read_timeout(None).ok();
-            Ok(None)
-        }
+    let r = match remote.read(&mut buf) {
+        Ok(0) => None,
+        Ok(n) => Some(buf[..n].to_vec()),
+        Err(_) => None,
+    };
+    remote.set_read_timeout(None).ok();
+    Ok(r.map(|first| (remote, first)))
+}
+
+/// 开启 TCP keepalive（平台相关，失败不影响功能）。
+#[cfg(windows)]
+fn enable_keepalive(sock: &TcpStream) {
+    use std::os::windows::io::AsRawSocket;
+    #[repr(C)]
+    struct TcpKeepalive {
+        onoff: u32,
+        keepalivetime: u32,
+        keepaliveinterval: u32,
+    }
+    #[link(name = "ws2_32")]
+    extern "system" {
+        fn WSAIoctl(
+            s: usize,
+            code: u32,
+            inbuf: *mut core::ffi::c_void,
+            inlen: u32,
+            outbuf: *mut core::ffi::c_void,
+            outlen: u32,
+            bytes: *mut u32,
+            overlapped: *mut core::ffi::c_void,
+            completion: *mut core::ffi::c_void,
+        ) -> i32;
+    }
+    const SIO_KEEPALIVE_VALS: u32 = 0x9800_0004;
+    let mut ka = TcpKeepalive {
+        onoff: 1,
+        keepalivetime: 30_000,
+        keepaliveinterval: 5_000,
+    };
+    unsafe {
+        let mut bytes = 0u32;
+        WSAIoctl(
+            sock.as_raw_socket() as usize,
+            SIO_KEEPALIVE_VALS,
+            &mut ka as *mut _ as *mut core::ffi::c_void,
+            std::mem::size_of::<TcpKeepalive>() as u32,
+            std::ptr::null_mut(),
+            0,
+            &mut bytes,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
     }
 }
 
-/// 已知可用的兜底 IP（来自校园 TLS 修复项目的公开清单，MIT）。
+#[cfg(unix)]
+fn enable_keepalive(sock: &TcpStream) {
+    use std::os::fd::AsRawFd;
+    #[link(name = "c")]
+    extern "C" {
+        fn setsockopt(
+            fd: i32,
+            level: i32,
+            name: i32,
+            val: *const core::ffi::c_void,
+            len: u32,
+        ) -> i32;
+    }
+    const SOL_SOCKET: i32 = 0xffff;
+    const SO_KEEPALIVE: i32 = 0x0008;
+    let one: i32 = 1;
+    unsafe {
+        setsockopt(
+            sock.as_raw_fd(),
+            SOL_SOCKET,
+            SO_KEEPALIVE,
+            &one as *const i32 as *const core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+fn enable_keepalive(_sock: &TcpStream) {}
+
+/// 已知可用的兜底 IP（校园 TLS 修复项目公开清单，MIT）。
 const FALLBACK_IPS: &[(&str, &str)] = &[
     ("api.nrd.nie.163.com", "112.13.123.98"),
     ("api-ipv4.nrd.nie.163.com", "112.13.123.98"),
@@ -439,37 +565,73 @@ const FALLBACK_IPS: &[(&str, &str)] = &[
     ("fp.ps.netease.com", "111.3.79.64"),
 ];
 
-/// 排除 fake-ip（Clash TUN 常见的 198.18.0.0/15）与回环/链路本地地址，
-/// 否则会连回 TUN，再被规则绕回自己，形成环路。
+/// 排除 fake-ip（198.18.0.0/15）和回环/链路本地地址。
 fn usable(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             let o = v4.octets();
-            if o[0] == 127 || o[0] == 0 {
-                return false;
-            }
-            if o[0] == 169 && o[1] == 254 {
-                return false;
-            }
-            if o[0] == 198 && (o[1] == 18 || o[1] == 19) {
-                return false;
-            }
-            true
+            !(o[0] == 127
+                || o[0] == 0
+                || (o[0] == 169 && o[1] == 254)
+                || (o[0] == 198 && (o[1] == 18 || o[1] == 19)))
         }
         IpAddr::V6(v6) => !v6.is_loopback(),
     }
 }
 
-/// 候选 IP 缓存：同一个域名 5 分钟内不重复查 DoH。
+const MAX_CACHE: usize = 512;
+
 fn cache() -> &'static Mutex<std::collections::HashMap<String, (Vec<IpAddr>, std::time::Instant)>> {
     static C: OnceLock<Mutex<std::collections::HashMap<String, (Vec<IpAddr>, std::time::Instant)>>> =
         OnceLock::new();
     C.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 
-/// 解析目标域名的候选 IP：配置 DNS → 多 DoH 合并 → 兜底表。
+fn bad_ips() -> &'static Mutex<std::collections::HashMap<String, std::time::Instant>> {
+    static B: OnceLock<Mutex<std::collections::HashMap<String, std::time::Instant>>> =
+        OnceLock::new();
+    B.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn mark_bad(host: &str, ip: IpAddr) {
+    if let Ok(mut g) = bad_ips().lock() {
+        if g.len() > MAX_CACHE {
+            g.retain(|_, exp| *exp > std::time::Instant::now());
+        }
+        g.insert(
+            format!("{host}|{ip}"),
+            std::time::Instant::now() + Duration::from_secs(300),
+        );
+    }
+    debug(&format!("{host}: {ip} marked bad for 5 min"));
+}
+
+/// 把最近失败的 IP 挪到候选末尾（不是删除：全都失败时仍可回退）。
+fn filter_bad(host: &str, list: Vec<IpAddr>) -> Vec<IpAddr> {
+    let now = std::time::Instant::now();
+    let mut good = Vec::with_capacity(list.len());
+    let mut bad = Vec::new();
+    if let Ok(g) = bad_ips().lock() {
+        for ip in list {
+            let is_bad = g
+                .get(&format!("{host}|{ip}"))
+                .map(|exp| *exp > now)
+                .unwrap_or(false);
+            if is_bad {
+                bad.push(ip);
+            } else {
+                good.push(ip);
+            }
+        }
+    } else {
+        return list;
+    }
+    good.extend(bad);
+    good
+}
+
+/// 解析目标域名的候选 IP：首选 DNS 与公共 DoH 并行，合并去重，5 分钟缓存。
 fn resolve_candidates(host: &str, preferred: &str) -> Vec<IpAddr> {
-    // 目标是 IP 字面量（SOCKS 客户端常见）：直接连
     if let Ok(ip) = host.trim().parse::<IpAddr>() {
         return vec![ip];
     }
@@ -483,7 +645,6 @@ fn resolve_candidates(host: &str, preferred: &str) -> Vec<IpAddr> {
         }
     }
 
-    // 首选 DNS 与公共 DoH 一起问：单家常常超时或只回 1 条
     let mut servers = vec![preferred.trim().to_string()];
     for url in [
         "https://223.5.5.5/dns-query",
@@ -521,7 +682,6 @@ fn resolve_candidates(host: &str, preferred: &str) -> Vec<IpAddr> {
                         out.push(ip);
                     }
                 }
-                // 拿到 2 条以上就可以先走，不必等更慢的那家
                 if out.len() >= 2 {
                     break;
                 }
@@ -541,6 +701,9 @@ fn resolve_candidates(host: &str, preferred: &str) -> Vec<IpAddr> {
 
     if !out.is_empty() {
         if let Ok(mut g) = cache().lock() {
+            if g.len() > MAX_CACHE {
+                g.retain(|_, (_, exp)| *exp > std::time::Instant::now());
+            }
             g.insert(
                 key.clone(),
                 (
@@ -554,46 +717,7 @@ fn resolve_candidates(host: &str, preferred: &str) -> Vec<IpAddr> {
     filter_bad(&key, out)
 }
 
-/// 最近失败的 IP：短时间内排到候选末尾，避免每次连接都先撞死 IP。
-fn bad_ips() -> &'static Mutex<std::collections::HashMap<String, std::time::Instant>> {
-    static B: OnceLock<Mutex<std::collections::HashMap<String, std::time::Instant>>> =
-        OnceLock::new();
-    B.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-}
-
-fn mark_bad(host: &str, ip: IpAddr) {
-    if let Ok(mut g) = bad_ips().lock() {
-        g.insert(
-            format!("{host}|{ip}"),
-            std::time::Instant::now() + Duration::from_secs(300),
-        );
-    }
-    debug(&format!("{host}: {ip} marked bad for 5 min"));
-}
-
-fn filter_bad(host: &str, list: Vec<IpAddr>) -> Vec<IpAddr> {
-    let now = std::time::Instant::now();
-    let mut good = Vec::new();
-    let mut bad = Vec::new();
-    let guard = bad_ips().lock();
-    for ip in list {
-        let is_bad = guard
-            .as_ref()
-            .ok()
-            .and_then(|g| g.get(&format!("{host}|{ip}")).copied())
-            .map(|exp| exp > now)
-            .unwrap_or(false);
-        if is_bad {
-            bad.push(ip);
-        } else {
-            good.push(ip);
-        }
-    }
-    good.extend(bad); // 全都试过一遍之后仍可回退到"坏"的
-    good
-}
-
-/// UU 的节点名会变（sig-3207-g / relay-mg-3207-g…），按前缀给兜底 IP。
+/// UU 节点名会变（sig-3207-g / relay-mg-3207-g…），按前缀给兜底。
 fn family_fallback(host: &str) -> Vec<&'static str> {
     let h = host.trim_end_matches('.').to_ascii_lowercase();
     if h.ends_with(".nrd.nie.163.com") || h == "nrd.nie.163.com" {
@@ -615,18 +739,11 @@ fn family_fallback(host: &str) -> Vec<&'static str> {
     Vec::new()
 }
 
-fn resolver_candidates(preferred: &str) -> Vec<String> {
-    let mut v = vec![preferred.trim().to_string()];
-    if dns::is_doh(preferred) {
-        return v;
-    }
-    for s in ["223.5.5.5", "119.29.29.29"] {
-        if !v.iter().any(|x| x == s) {
-            v.push(s.to_string());
-        }
-    }
-    v.retain(|s| !s.is_empty());
-    v
+
+/// 透传结果：Failed 表示"还没给客户端写过任何数据就失败了"，可以换 IP 重试。
+enum PumpOutcome {
+    Done,
+    Failed(String),
 }
 
 fn pump(
@@ -634,21 +751,19 @@ fn pump(
     remote: TcpStream,
     pre: Option<Vec<u8>>,
     stats: Arc<Stats>,
-) -> Result<(), String> {
+) -> (TcpStream, PumpOutcome) {
     // 握手阶段设的读超时必须在透传前清掉：否则空闲超过该时长，
     // 读线程会得到 WouldBlock 而提前结束，整个连接被我们主动 abort。
     let _ = client.set_read_timeout(None);
     let _ = client.set_write_timeout(None);
-    let mut c2 = client
-        .try_clone()
-        .map_err(|e| format!("socket clone failed: {e}"))?;
-    let mut r2 = remote
-        .try_clone()
-        .map_err(|e| format!("socket clone failed: {e}"))?;
+    let (mut c2, mut r2) = match (client.try_clone(), remote.try_clone()) {
+        (Ok(a), Ok(b)) => (a, b),
+        _ => return (client, PumpOutcome::Done),
+    };
     let up_stats = stats.clone();
 
     let up_thread = std::thread::spawn(move || {
-        let mut buf = [0u8; 16384];
+        let mut buf = [0u8; 65536];
         let mut total = 0u64;
         loop {
             match c2.read(&mut buf) {
@@ -670,17 +785,21 @@ fn pump(
 
     // 探测阶段已经读到的服务器首段，先写回客户端
     let mut total = 0u64;
+    let mut wrote_to_client = false;
     if let Some(bytes) = pre {
         if !bytes.is_empty() {
-            client
-                .write_all(&bytes)
-                .map_err(|e| format!("write first chunk failed: {e}"))?;
+            if client.write_all(&bytes).is_err() {
+                let _ = up_thread.join();
+                return (client, PumpOutcome::Done);
+            }
             total += bytes.len() as u64;
+            wrote_to_client = true;
         }
     }
 
-    let mut buf = [0u8; 16384];
+    let mut buf = [0u8; 65536];
     let mut r = remote;
+    let mut last_err: Option<String> = None;
     loop {
         match r.read(&mut buf) {
             Ok(0) => break,
@@ -689,14 +808,25 @@ fn pump(
                     break;
                 }
                 total += n as u64;
+                wrote_to_client = true;
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
             Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
+            Err(e) => {
+                last_err = Some(e.to_string());
+                break;
+            }
         }
     }
     stats.bytes_down.fetch_add(total, Ordering::Relaxed);
-    let _ = client.shutdown(std::net::Shutdown::Both);
+    // 下行结束时先半关闭写方向，让对端有机会把剩余数据读完
+    let _ = client.shutdown(std::net::Shutdown::Write);
     let _ = up_thread.join();
-    Ok(())
+    let _ = client.shutdown(std::net::Shutdown::Both);
+
+    // 一个字节都没收到就失败 → 允许换 IP 重试；已经通过数据就不能再换
+    match last_err {
+        Some(e) if !wrote_to_client => (client, PumpOutcome::Failed(e)),
+        _ => (client, PumpOutcome::Done),
+    }
 }
