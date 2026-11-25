@@ -35,7 +35,7 @@
 
 ## 二、架构：前端 + 独立内核
 
-从 1.10.1 起按 Clash Verge 的方式拆开：
+从 1.11.0 起按 Clash Verge 的方式拆开：
 
 ```
 UURelayBridge.exe（前端：界面、配置、hosts 管理、托盘）
@@ -113,8 +113,17 @@ dns: 223.5.5.5     # 也支持 https://dns.alidns.com/dns-query
 ```
 应用 → hosts 把域名指向 127.0.0.1 → UURelayBridge 监听 443（TLS）/ 80（HTTP）
      → 读 ClientHello 取 SNI → 用 DNS 查真实 IP（绕过被改写的 hosts）
-     → 按需把这条记录拆成多段 → 转发 → 之后双向透传（不终止 TLS）
+     → 把首个报文切成 2 条 TLS 记录（切点在 SNI 域名中间）→ 转发 → 之后双向透传（不终止 TLS）
 ```
+
+抗阻断的三个要点（参照 campus-tls-fix 的做法）：
+
+1. **切在 SNI 名字中间**：把 ClientHello 拆成 2 条记录，切点落在域名字符串中央，
+   任何一条记录里都不出现完整域名 —— 只按单条记录匹配的 DPI 就看不到 SNI。
+2. **避开 fake-ip**：DNS 返回 `198.18.x.x` / `127.x` 时不用，改用 DoH 重新查询，
+   避免把自己绕回 TUN 形成环路。
+3. **多候选 IP 自动换线**：DNS 会给多个 A 记录，逐个探测；某个 IP 连上但服务器不响应，
+   自动换下一个，并附带一份已知可用的兜底 IP 表。
 
 操作顺序：
 

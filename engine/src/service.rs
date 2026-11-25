@@ -243,7 +243,10 @@ fn http_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<(
         .ok_or_else(|| "HTTP 请求没有 Host 头".to_string())?;
     let host = host.split(':').next().unwrap_or(&host).to_string();
 
-    let ip = resolve_fast(&host, &cfg.dns_server).ok_or_else(|| format!("{host} 解析失败"))?;
+    let ip = resolve_candidates(&host, &cfg.dns_server)
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("{host} 解析失败"))?;
     let mut remote =
         TcpStream::connect_timeout(&SocketAddr::new(ip, 80), Duration::from_secs(6))
             .map_err(|e| format!("连接 {host} 失败：{e}"))?;
@@ -251,7 +254,7 @@ fn http_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<(
         .write_all(&buf)
         .map_err(|e| format!("转发 HTTP 请求失败：{e}"))?;
     log(&format!("{host} → {ip}:80（HTTP 直连）"));
-    pump(client, remote, stats)
+    pump(client, remote, None, stats)
 }
 
 fn relay(
@@ -262,58 +265,195 @@ fn relay(
     cfg: &Config,
     stats: Arc<Stats>,
 ) -> Result<(), String> {
-    let ip = resolve_fast(host, &cfg.dns_server)
-        .ok_or_else(|| format!("{host} 解析失败（DNS 未返回 A 记录）"))?;
-    let mut remote = TcpStream::connect_timeout(&SocketAddr::new(ip, port), Duration::from_secs(6))
-        .map_err(|e| format!("连接 {host}（{ip}）失败：{e}"))?;
-    let _ = remote.set_nodelay(true);
+    let candidates = resolve_candidates(host, &cfg.dns_server);
+    if candidates.is_empty() {
+        return Err(format!("{host} 解析失败（没有可用的 A 记录）"));
+    }
 
     let matched = cfg.matches(host);
     let fragmented = matched && cfg.fragment.mode != "off";
-    if fragmented && cfg.fragment.mode == "record" {
-        let parts = tls::split_record(record, cfg.fragment.parts as usize);
-        for p in &parts {
-            remote
-                .write_all(p)
-                .map_err(|e| format!("发送分片失败：{e}"))?;
-        }
-        if cfg.log_connections {
-            log(&format!(
-                "{host} → {ip}（TLS Record 分片 {} 段）",
-                parts.len()
-            ));
-        }
-    } else if fragmented {
-        let parts = tls::segment_chunks(record, cfg.fragment.parts as usize);
-        for (i, p) in parts.iter().enumerate() {
-            remote
-                .write_all(p)
-                .map_err(|e| format!("发送分段失败：{e}"))?;
-            if i + 1 < parts.len() {
-                std::thread::sleep(Duration::from_millis(4));
+    let (payload, how) = build_payload(record, cfg, fragmented);
+
+    let mut last = String::from("无可用 IP");
+    for (idx, ip) in candidates.iter().enumerate() {
+        match connect_probe(&payload, *ip, port) {
+            Ok(Some((remote, first))) => {
+                if cfg.log_connections {
+                    log(&format!("{host} → {ip}（{how}）"));
+                }
+                if matched {
+                    stats.fragmented.fetch_add(1, Ordering::Relaxed);
+                }
+                return pump(client, remote, Some(first), stats);
+            }
+            Ok(None) => {
+                log(&format!("{host} 在 {ip} 上没有响应，换下一个候选"));
+                last = format!("{ip} 无响应");
+            }
+            Err(e) => {
+                log(&format!("{host} 连接 {ip} 失败：{e}"));
+                last = e;
             }
         }
-        if cfg.log_connections {
-            log(&format!("{host} → {ip}（TCP 分段 {} 段）", parts.len()));
-        }
-    } else {
-        remote
-            .write_all(record)
-            .map_err(|e| format!("转发 ClientHello 失败：{e}"))?;
-        if cfg.log_connections && matched {
-            log(&format!("{host} → {ip}（未分片）"));
+        if idx + 1 < candidates.len() && cfg.log_connections {
+            log(&format!("{host} 重试候选 #{}", idx + 2));
         }
     }
-    if fragmented {
-        stats.fragmented.fetch_add(1, Ordering::Relaxed);
-    }
-    pump(client, remote, stats)
+    Err(format!("{host} 全部候选 IP 失败：{last}"))
 }
 
-fn resolve_fast(host: &str, preferred: &str) -> Option<IpAddr> {
-    let servers = resolver_candidates(preferred);
+/// 按分片配置生成要发出去的首包（以及给日志用的描述）。
+fn build_payload(record: &[u8], cfg: &Config, fragmented: bool) -> (Vec<u8>, String) {
+    if fragmented && cfg.fragment.mode == "record" {
+        // 优先「切在 SNI 域名中间」拆成 2 条记录：任何一条记录里都不含完整域名
+        // （参照 campus-tls-fix 的实现）。
+        let (parts, how) = match tls::split_mid_sni(record) {
+            Some(p) => (p, "切在 SNI 中间"),
+            None => (
+                tls::split_record(record, cfg.fragment.parts as usize),
+                "等分",
+            ),
+        };
+        let mut buf = Vec::with_capacity(record.len() + 5 * parts.len());
+        for p in &parts {
+            buf.extend_from_slice(p);
+        }
+        (buf, format!("TLS Record {} 段，{}", parts.len(), how))
+    } else if fragmented {
+        let parts = tls::segment_chunks(record, cfg.fragment.parts as usize);
+        (parts.concat(), format!("TCP 分段 {} 段", parts.len()))
+    } else {
+        (record.to_vec(), "未分片".to_string())
+    }
+}
+
+/// 连一个候选 IP、把首包发出去，然后等服务器的第一个字节。
+/// 返回 Some((连接, 已读到的字节)) 表示这条线路是通的。
+fn connect_probe(
+    payload: &[u8],
+    ip: IpAddr,
+    port: u16,
+) -> Result<Option<(TcpStream, Vec<u8>)>, String> {
+    let mut remote = TcpStream::connect_timeout(&SocketAddr::new(ip, port), Duration::from_secs(5))
+        .map_err(|e| format!("连接失败：{e}"))?;
+    let _ = remote.set_nodelay(true);
+    remote
+        .write_all(payload)
+        .map_err(|e| format!("发送失败：{e}"))?;
+
+    remote
+        .set_read_timeout(Some(Duration::from_secs(4)))
+        .map_err(|e| e.to_string())?;
+    let mut buf = [0u8; 8192];
+    match remote.read(&mut buf) {
+        Ok(0) => Ok(None),
+        Ok(n) => {
+            remote.set_read_timeout(None).ok();
+            Ok(Some((remote, buf[..n].to_vec())))
+        }
+        Err(_) => Ok(None),
+    }
+}
+
+/// 已知可用的兜底 IP（来自 campus-tls-fix，MIT；DNS 被污染/fake-ip 时用）。
+const FALLBACK_IPS: &[(&str, &str)] = &[
+    ("api.nrd.nie.163.com", "112.13.123.98"),
+    ("api-ipv4.nrd.nie.163.com", "112.13.123.98"),
+    ("api-dcdn.nrd.nie.163.com", "117.148.172.102"),
+    ("api-event.nrd.nie.163.com", "117.147.201.23"),
+    ("sig-3303-d.nrd.nie.163.com", "34.95.122.33"),
+    ("relay-mg-3303-d.nrd.nie.163.com", "117.147.201.40"),
+    ("uuyc.163.com", "59.111.44.89"),
+    ("uuyc.webapp.163.com", "117.148.172.102"),
+    ("nrd-ugc.fp.ps.netease.com", "111.3.79.64"),
+    ("fp.ps.netease.com", "111.3.79.64"),
+    ("dns.qq.com", "119.29.29.229"),
+    ("dns.weixin.qq.com", "120.204.0.63"),
+    ("dns.weixin.qq.com.cn", "120.204.0.63"),
+    ("httpdns.kg.qq.com", "117.135.175.48"),
+    ("dns.wechat.com", "43.152.112.101"),
+];
+
+/// 排除 fake-ip（Clash TUN 常给 198.18.0.0/15）和回环/链路本地地址，
+/// 否则我们会连回 TUN，再被规则绕回自己，形成环路。
+fn usable(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            if o[0] == 127 || o[0] == 0 {
+                return false;
+            }
+            if o[0] == 169 && o[1] == 254 {
+                return false;
+            }
+            // 198.18.0.0/15 → fake-ip
+            if o[0] == 198 && (o[1] == 18 || o[1] == 19) {
+                return false;
+            }
+            true
+        }
+        IpAddr::V6(v6) => !v6.is_loopback(),
+    }
+}
+
+fn resolve_candidates(host: &str, preferred: &str) -> Vec<IpAddr> {
+    let mut out: Vec<IpAddr> = Vec::new();
+
+    // 1) 配置里的 DNS（明文或 DoH），取全部 A 记录
+    for server in resolver_candidates(preferred) {
+        if let Ok(list) = dns::resolve_all(host, &server) {
+            for v4 in list {
+                let ip = IpAddr::V4(v4);
+                if usable(ip) && !out.contains(&ip) {
+                    out.push(ip);
+                }
+            }
+        }
+        if !out.is_empty() {
+            break;
+        }
+    }
+    if !out.is_empty() {
+        return out;
+    }
+
+    // 2) 配置的 DNS 给的是 fake-ip 或失败：改用 DoH 重查
+    for doh in [
+        "https://223.5.5.5/dns-query",
+        "https://dns.alidns.com/dns-query",
+        "https://1.1.1.1/dns-query",
+    ] {
+        if let Ok(list) = dns::resolve_all(host, doh) {
+            for v4 in list {
+                let ip = IpAddr::V4(v4);
+                if usable(ip) && !out.contains(&ip) {
+                    out.push(ip);
+                }
+            }
+        }
+        if !out.is_empty() {
+            log(&format!("{host} 经 DoH 解析到 {} 个 IP", out.len()));
+            break;
+        }
+    }
+
+    // 3) 内置兜底 IP 放到最后再试
+    let key = host.trim_end_matches('.').to_ascii_lowercase();
+    for (name, ip) in FALLBACK_IPS {
+        if key == *name {
+            if let Ok(ip) = ip.parse::<IpAddr>() {
+                if !out.contains(&ip) {
+                    out.push(ip);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn resolve_via(host: &str, servers: &[String]) -> Option<IpAddr> {
     let (tx, rx) = std::sync::mpsc::channel();
-    for server in &servers {
+    for server in servers {
         let host = host.to_string();
         let server = server.clone();
         let tx = tx.clone();
@@ -350,7 +490,12 @@ fn resolver_candidates(preferred: &str) -> Vec<String> {
     v
 }
 
-fn pump(mut client: TcpStream, remote: TcpStream, stats: Arc<Stats>) -> Result<(), String> {
+fn pump(
+    mut client: TcpStream,
+    remote: TcpStream,
+    pre: Option<Vec<u8>>,
+    stats: Arc<Stats>,
+) -> Result<(), String> {
     let mut c2 = client
         .try_clone()
         .map_err(|e| format!("复制套接字失败：{e}"))?;
@@ -378,8 +523,18 @@ fn pump(mut client: TcpStream, remote: TcpStream, stats: Arc<Stats>) -> Result<(
         let _ = r2.shutdown(std::net::Shutdown::Write);
     });
 
-    let mut buf = [0u8; 16384];
+    // 探测阶段已经读到的服务器首段，先写回客户端
     let mut total = 0u64;
+    if let Some(bytes) = pre {
+        if !bytes.is_empty() {
+            client
+                .write_all(&bytes)
+                .map_err(|e| format!("回写首段失败：{e}"))?;
+            total += bytes.len() as u64;
+        }
+    }
+
+    let mut buf = [0u8; 16384];
     let mut r = remote;
     loop {
         match r.read(&mut buf) {

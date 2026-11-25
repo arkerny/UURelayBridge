@@ -231,3 +231,18 @@ mod tests {
         assert_eq!(addrs, vec![Ipv4Addr::new(93, 184, 216, 34)]);
     }
 }
+
+/// 返回全部 A 记录（DoH 或明文），供"多候选 IP 依次尝试"使用。
+pub fn resolve_all(host: &str, server: &str) -> Result<Vec<Ipv4Addr>, String> {
+    let s = server.trim();
+    if s.starts_with("http://") || s.starts_with("https://") {
+        let id = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0) & 0xFFFF) as u16;
+        let query = build_query(host, id);
+        let resp = crate::sni::doh::query(s, &query, 6000)?;
+        return parse_response(&resp, id).ok_or_else(|| "DoH 响应无法解析".to_string());
+    }
+    resolve(host, s)
+}
