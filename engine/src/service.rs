@@ -6,7 +6,7 @@
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use uurelaybridge_core::sni::{dns, tls};
@@ -31,8 +31,22 @@ fn log_path() -> std::path::PathBuf {
 }
 
 /// 统一日志格式：`HH:MM:SS.mmm [LEVEL] message`，同时写 stdout 和运行目录下的日志文件。
+static DEBUG_ON: AtomicU64 = AtomicU64::new(0);
+
+/// 打开 DEBUG 级别（配置里 log_level: debug 时调用）。
+pub fn set_debug(on: bool) {
+    DEBUG_ON.store(if on { 1 } else { 0 }, Ordering::Relaxed);
+}
+
 pub fn log(msg: &str) {
     log_level("INFO", msg);
+}
+
+/// 只在 log_level: debug 下输出的细节（逐连接、逐个候选 IP）。
+pub fn debug(msg: &str) {
+    if DEBUG_ON.load(Ordering::Relaxed) == 1 {
+        log_level("DEBUG", msg);
+    }
 }
 
 pub fn log_level(level: &str, msg: &str) {
@@ -236,7 +250,7 @@ fn socks_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<
         .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
         .map_err(|e| format!("socks reply failed: {e}"))?;
     if cfg.log_connections {
-        log(&format!("SOCKS CONNECT reply sent: {host}:{port}"));
+        debug(&format!("SOCKS CONNECT reply sent: {host}:{port}"));
     }
 
     let mut hdr = [0u8; 5];
@@ -259,7 +273,7 @@ fn socks_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<
 
     let sni = tls::parse_sni(&record).unwrap_or_else(|| host.clone());
     if cfg.log_connections {
-        log(&format!("SOCKS target {host}:{port} sni={sni} first-record={}B", record.len()));
+        debug(&format!("SOCKS target {host}:{port} sni={sni} first-record={}B", record.len()));
     }
     relay(client, &record, &host, &sni, port, cfg, stats)
 }
@@ -335,6 +349,7 @@ fn relay(
                 return pump(client, remote, Some(first), stats);
             }
             Ok(None) => {
+                mark_bad(host, *ip);
                 log_level("WARN", &format!("{host}: no response from {ip}, trying next candidate"));
                 last = format!("{ip} no response");
             }
@@ -344,7 +359,7 @@ fn relay(
             }
         }
         if idx + 1 < candidates.len() && cfg.log_connections {
-            log(&format!("{host}: retry candidate #{}", idx + 2));
+            debug(&format!("{host}: retry candidate #{}", idx + 2));
         }
     }
     Err(format!("{host}: all candidate IPs failed ({last})"))
@@ -388,10 +403,10 @@ fn connect_probe(
     remote
         .write_all(payload)
         .map_err(|e| format!("send failed: {e}"))?;
-    log(&format!("  probe sent {}B to {ip}:{port}", payload.len()));
+    debug(&format!("  probe sent {}B to {ip}:{port}", payload.len()));
 
     remote
-        .set_read_timeout(Some(Duration::from_secs(4)))
+        .set_read_timeout(Some(Duration::from_millis(2500)))
         .map_err(|e| e.to_string())?;
     let mut buf = [0u8; 8192];
     match remote.read(&mut buf) {
@@ -400,7 +415,7 @@ fn connect_probe(
             Ok(None)
         }
         Ok(n) => {
-            log(&format!("  {ip} replied {n}B"));
+            debug(&format!("  {ip} replied {n}B"));
             remote.set_read_timeout(None).ok();
             Ok(Some((remote, buf[..n].to_vec())))
         }
@@ -411,27 +426,20 @@ fn connect_probe(
     }
 }
 
-/// 已知可用的兜底 IP（来自 campus-tls-fix，MIT；DNS 被污染/fake-ip 时用）。
+/// 已知可用的兜底 IP（来自校园 TLS 修复项目的公开清单，MIT）。
 const FALLBACK_IPS: &[(&str, &str)] = &[
     ("api.nrd.nie.163.com", "112.13.123.98"),
     ("api-ipv4.nrd.nie.163.com", "112.13.123.98"),
     ("api-dcdn.nrd.nie.163.com", "117.148.172.102"),
     ("api-event.nrd.nie.163.com", "117.147.201.23"),
-    ("sig-3303-d.nrd.nie.163.com", "34.95.122.33"),
-    ("relay-mg-3303-d.nrd.nie.163.com", "117.147.201.40"),
     ("uuyc.163.com", "59.111.44.89"),
     ("uuyc.webapp.163.com", "117.148.172.102"),
     ("nrd-ugc.fp.ps.netease.com", "111.3.79.64"),
     ("fp.ps.netease.com", "111.3.79.64"),
-    ("dns.qq.com", "119.29.29.229"),
-    ("dns.weixin.qq.com", "120.204.0.63"),
-    ("dns.weixin.qq.com.cn", "120.204.0.63"),
-    ("httpdns.kg.qq.com", "117.135.175.48"),
-    ("dns.wechat.com", "43.152.112.101"),
 ];
 
-/// 排除 fake-ip（Clash TUN 常给 198.18.0.0/15）和回环/链路本地地址，
-/// 否则我们会连回 TUN，再被规则绕回自己，形成环路。
+/// 排除 fake-ip（Clash TUN 常见的 198.18.0.0/15）与回环/链路本地地址，
+/// 否则会连回 TUN，再被规则绕回自己，形成环路。
 fn usable(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -442,7 +450,6 @@ fn usable(ip: IpAddr) -> bool {
             if o[0] == 169 && o[1] == 254 {
                 return false;
             }
-            // 198.18.0.0/15 → fake-ip
             if o[0] == 198 && (o[1] == 18 || o[1] == 19) {
                 return false;
             }
@@ -452,65 +459,160 @@ fn usable(ip: IpAddr) -> bool {
     }
 }
 
+/// 候选 IP 缓存：同一个域名 5 分钟内不重复查 DoH。
+fn cache() -> &'static Mutex<std::collections::HashMap<String, (Vec<IpAddr>, std::time::Instant)>> {
+    static C: OnceLock<Mutex<std::collections::HashMap<String, (Vec<IpAddr>, std::time::Instant)>>> =
+        OnceLock::new();
+    C.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+/// 解析目标域名的候选 IP：配置 DNS → 多 DoH 合并 → 兜底表。
 fn resolve_candidates(host: &str, preferred: &str) -> Vec<IpAddr> {
-    // 目标本身是 IP 字面量（SOCKS 客户端常见）：直接连，不做 DNS、不做过滤
+    // 目标是 IP 字面量（SOCKS 客户端常见）：直接连
     if let Ok(ip) = host.trim().parse::<IpAddr>() {
         return vec![ip];
     }
-    let mut out: Vec<IpAddr> = Vec::new();
 
-    // 1) 配置里的 DNS（明文或 DoH），取全部 A 记录
-    for server in resolver_candidates(preferred) {
-        if let Ok(list) = dns::resolve_all(host, &server) {
-            for v4 in list {
-                let ip = IpAddr::V4(v4);
-                if usable(ip) && !out.contains(&ip) {
-                    out.push(ip);
-                }
-            }
-        }
-        if !out.is_empty() {
-            break;
-        }
-    }
-    if !out.is_empty() {
-        return out;
-    }
-
-    // 2) 配置的 DNS 给的是 fake-ip 或失败：改用 DoH 重查
-    for doh in [
-        "https://223.5.5.5/dns-query",
-        "https://dns.alidns.com/dns-query",
-        "https://1.1.1.1/dns-query",
-    ] {
-        if let Ok(list) = dns::resolve_all(host, doh) {
-            for v4 in list {
-                let ip = IpAddr::V4(v4);
-                if usable(ip) && !out.contains(&ip) {
-                    out.push(ip);
-                }
-            }
-        }
-        if !out.is_empty() {
-            log(&format!("{host}: resolved {} IP(s) via DoH", out.len()));
-            break;
-        }
-    }
-
-    // 3) 内置兜底 IP 放到最后再试
     let key = host.trim_end_matches('.').to_ascii_lowercase();
-    for (name, ip) in FALLBACK_IPS {
-        if key == *name {
-            if let Ok(ip) = ip.parse::<IpAddr>() {
-                if !out.contains(&ip) {
-                    out.push(ip);
-                }
+    if let Ok(g) = cache().lock() {
+        if let Some((list, exp)) = g.get(&key) {
+            if *exp > std::time::Instant::now() {
+                return filter_bad(&key, list.clone());
             }
         }
     }
-    out
+
+    // 首选 DNS 与公共 DoH 一起问：单家常常超时或只回 1 条
+    let mut servers = vec![preferred.trim().to_string()];
+    for url in [
+        "https://223.5.5.5/dns-query",
+        "https://1.1.1.1/dns-query",
+        "https://cloudflare-dns.com/dns-query",
+        "https://dns.google/dns-query",
+    ] {
+        if !servers.iter().any(|s| s == url) {
+            servers.push(url.to_string());
+        }
+    }
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    for server in servers {
+        let host = host.to_string();
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(dns::resolve_all(&host, &server));
+        });
+    }
+    drop(tx);
+
+    let mut out: Vec<IpAddr> = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_millis(2000);
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        match rx.recv_timeout(left) {
+            Ok(Ok(list)) => {
+                for v4 in list {
+                    let ip = IpAddr::V4(v4);
+                    if usable(ip) && !out.contains(&ip) {
+                        out.push(ip);
+                    }
+                }
+                // 拿到 2 条以上就可以先走，不必等更慢的那家
+                if out.len() >= 2 {
+                    break;
+                }
+            }
+            Ok(Err(_)) => continue,
+            Err(_) => break,
+        }
+    }
+
+    for ip in family_fallback(host) {
+        if let Ok(ip) = ip.parse::<IpAddr>() {
+            if !out.contains(&ip) {
+                out.push(ip);
+            }
+        }
+    }
+
+    if !out.is_empty() {
+        if let Ok(mut g) = cache().lock() {
+            g.insert(
+                key.clone(),
+                (
+                    out.clone(),
+                    std::time::Instant::now() + Duration::from_secs(300),
+                ),
+            );
+        }
+    }
+    debug(&format!("{host}: {} candidate IP(s)", out.len()));
+    filter_bad(&key, out)
 }
 
+/// 最近失败的 IP：短时间内排到候选末尾，避免每次连接都先撞死 IP。
+fn bad_ips() -> &'static Mutex<std::collections::HashMap<String, std::time::Instant>> {
+    static B: OnceLock<Mutex<std::collections::HashMap<String, std::time::Instant>>> =
+        OnceLock::new();
+    B.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn mark_bad(host: &str, ip: IpAddr) {
+    if let Ok(mut g) = bad_ips().lock() {
+        g.insert(
+            format!("{host}|{ip}"),
+            std::time::Instant::now() + Duration::from_secs(300),
+        );
+    }
+    debug(&format!("{host}: {ip} marked bad for 5 min"));
+}
+
+fn filter_bad(host: &str, list: Vec<IpAddr>) -> Vec<IpAddr> {
+    let now = std::time::Instant::now();
+    let mut good = Vec::new();
+    let mut bad = Vec::new();
+    let guard = bad_ips().lock();
+    for ip in list {
+        let is_bad = guard
+            .as_ref()
+            .ok()
+            .and_then(|g| g.get(&format!("{host}|{ip}")).copied())
+            .map(|exp| exp > now)
+            .unwrap_or(false);
+        if is_bad {
+            bad.push(ip);
+        } else {
+            good.push(ip);
+        }
+    }
+    good.extend(bad); // 全都试过一遍之后仍可回退到"坏"的
+    good
+}
+
+/// UU 的节点名会变（sig-3207-g / relay-mg-3207-g…），按前缀给兜底 IP。
+fn family_fallback(host: &str) -> Vec<&'static str> {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    if h.ends_with(".nrd.nie.163.com") || h == "nrd.nie.163.com" {
+        if h.starts_with("sig-") {
+            return vec!["34.95.122.33"];
+        }
+        if h.starts_with("relay-mg-") {
+            return vec!["117.147.201.40"];
+        }
+        if h.starts_with("api") {
+            return vec!["112.13.123.98"];
+        }
+    }
+    for (name, ip) in FALLBACK_IPS {
+        if h == *name {
+            return vec![*ip];
+        }
+    }
+    Vec::new()
+}
 
 fn resolver_candidates(preferred: &str) -> Vec<String> {
     let mut v = vec![preferred.trim().to_string()];
