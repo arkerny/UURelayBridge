@@ -421,6 +421,7 @@ fn connect_probe(
         }
         Err(e) => {
             log_level("WARN", &format!("  {ip} no reply ({e})"));
+            remote.set_read_timeout(None).ok();
             Ok(None)
         }
     }
@@ -634,6 +635,10 @@ fn pump(
     pre: Option<Vec<u8>>,
     stats: Arc<Stats>,
 ) -> Result<(), String> {
+    // 握手阶段设的读超时必须在透传前清掉：否则空闲超过该时长，
+    // 读线程会得到 WouldBlock 而提前结束，整个连接被我们主动 abort。
+    let _ = client.set_read_timeout(None);
+    let _ = client.set_write_timeout(None);
     let mut c2 = client
         .try_clone()
         .map_err(|e| format!("socket clone failed: {e}"))?;
@@ -654,6 +659,8 @@ fn pump(
                     }
                     total += n as u64;
                 }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(_) => break,
             }
         }
@@ -683,6 +690,8 @@ fn pump(
                 }
                 total += n as u64;
             }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
     }
