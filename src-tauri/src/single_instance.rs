@@ -48,7 +48,28 @@ pub fn claim() -> bool {
     false
 }
 
+/// macOS / Linux：用数据目录旁的锁文件实现单实例。
 #[cfg(not(windows))]
 pub fn claim() -> bool {
-    false
+    use std::fs::OpenOptions;
+
+    let dir = std::env::temp_dir().join("uurelaybridge");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("instance.lock");
+    let Ok(file) = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+    else {
+        return false; // 打不开锁文件就当没占用，别挡住启动
+    };
+    match file.try_lock() {
+        Ok(()) => {
+            // 锁随进程存活；故意泄漏文件句柄
+            std::mem::forget(file);
+            false
+        }
+        Err(_) => true,
+    }
 }

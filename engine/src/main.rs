@@ -109,7 +109,7 @@ fn do_run(arg_config: Option<String>, mode: Option<String>, port: Option<u16>) -
         }
     };
     if created {
-        service::log(&format!("已创建默认配置：{}", path.display()));
+        service::log(&format!("created default config: {}", path.display()));
     }
     let mut cfg = match load(&path) {
         Ok(c) => c,
@@ -139,8 +139,28 @@ fn do_run(arg_config: Option<String>, mode: Option<String>, port: Option<u16>) -
         }
         return ExitCode::from(1);
     }
+
+    // 启动前检查：域名是否已被 hosts 指到本机（host 模式会自己连自己）
+    if cfg.check_hosts {
+        let bad = check_hosts_pointing_to_local(&cfg.domains);
+        if !bad.is_empty() {
+            for (domain, target) in &bad {
+                service::log_level(
+                    "ERROR",
+                    &format!("hosts maps {domain} -> {target}; the relay would loop back to itself"),
+                );
+            }
+            eprintln!(
+                "ERROR: {} domain(s) in the system hosts file point to this machine. \
+                 Remove those entries (or set check_hosts: false) before starting.",
+                bad.len()
+            );
+            return ExitCode::from(3);
+        }
+    }
+
     service::log(&format!(
-        "配置：{}（v{} mode={} domains={} fragment={} dns={}）",
+        "config: {} (v{} mode={} domains={} fragment={} dns={})",
         path.display(),
         env!("CARGO_PKG_VERSION"),
         cfg.kind,
@@ -155,6 +175,40 @@ fn do_run(arg_config: Option<String>, mode: Option<String>, port: Option<u16>) -
             ExitCode::from(1)
         }
     }
+}
+
+
+/// 读取系统 hosts，返回那些「指向本机」的配置域名。
+fn check_hosts_pointing_to_local(domains: &[String]) -> Vec<(String, String)> {
+    let path = uurelaybridge_core::sni::hosts::hosts_path();
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let Some(ip) = parts.next() else { continue };
+        let local = matches!(ip, "127.0.0.1" | "0.0.0.0" | "::1" | "localhost" | "::")
+            || ip.starts_with("127.");
+        if !local {
+            continue;
+        }
+        for name in parts {
+            let n = name.trim_end_matches('.').to_ascii_lowercase();
+            if domains
+                .iter()
+                .any(|d| n == *d || n.ends_with(&format!(".{d}")))
+                && !out.iter().any(|(x, _): &(String, String)| *x == n)
+            {
+                out.push((n, ip.to_string()));
+            }
+        }
+    }
+    out
 }
 
 fn main() -> ExitCode {

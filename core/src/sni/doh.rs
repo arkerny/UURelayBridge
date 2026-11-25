@@ -7,7 +7,7 @@
 //! 只实现 POST `application/dns-message` 这一种最小可用形式。
 
 #[cfg(not(windows))]
-use std::io::Read;
+use std::io::{Read, Write};
 #[cfg(not(windows))]
 use std::process::{Command, Stdio};
 

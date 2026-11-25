@@ -22,9 +22,43 @@ pub struct Stats {
     pub bytes_down: AtomicU64,
 }
 
+fn log_path() -> std::path::PathBuf {
+    let dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    dir.join("uuengine.log")
+}
+
+/// 统一日志格式：`HH:MM:SS.mmm [LEVEL] message`，同时写 stdout 和运行目录下的日志文件。
 pub fn log(msg: &str) {
-    println!("[uuengine] {msg}");
+    log_level("INFO", msg);
+}
+
+pub fn log_level(level: &str, msg: &str) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (h, m, s) = ((now / 3600) % 24, (now / 60) % 60, now % 60);
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_millis())
+        .unwrap_or(0);
+    let line = format!("{h:02}:{m:02}:{s:02}.{millis:03} [{level}] {msg}");
+
+    println!("{line}");
     let _ = std::io::stdout().flush();
+
+    // 日志文件：运行目录不可写时静默跳过（例如装到 Program Files）
+    use std::io::Write as _;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path())
+    {
+        let _ = writeln!(f, "{line}");
+    }
 }
 
 /// 启动所有监听并阻塞运行。
@@ -35,26 +69,26 @@ pub fn run(cfg: Config) -> Result<(), String> {
     if cfg.kind == "socks" {
         let addr = format!("127.0.0.1:{}", cfg.socks_port);
         let l = TcpListener::bind(&addr).map_err(|e| bind_err(&addr, e))?;
-        log(&format!("SOCKS5 监听 {addr}"));
+        log(&format!("SOCKS5 listening on {addr}"));
         accept_loop(l, cfg.clone(), stats.clone(), Kind::Socks)?;
     } else {
         let a = format!("127.0.0.1:{}", cfg.listen_port);
         let l = TcpListener::bind(&a).map_err(|e| bind_err(&a, e))?;
-        log(&format!("TLS 转发监听 {a}"));
+        log(&format!("TLS relay listening on {a}"));
         if cfg.http_port > 0 {
             let h = format!("127.0.0.1:{}", cfg.http_port);
             match TcpListener::bind(&h) {
                 Ok(hl) => {
-                    log(&format!("HTTP 转发监听 {h}"));
+                    log(&format!("HTTP relay listening on {h}"));
                     let c = cfg.clone();
                     let s = stats.clone();
                     std::thread::spawn(move || {
                         if let Err(e) = accept_loop(hl, c, s, Kind::Http) {
-                            log(&format!("HTTP 监听结束：{e}"));
+                            log_level("WARN", &format!("HTTP listener stopped: {e}"));
                         }
                     });
                 }
-                Err(e) => log(&format!("HTTP 端口 {h} 未监听：{e}")),
+                Err(e) => log_level("WARN", &format!("HTTP port {h} not bound: {e}")),
             }
         }
         accept_loop(l, cfg.clone(), stats.clone(), Kind::Https)?;
@@ -64,11 +98,11 @@ pub fn run(cfg: Config) -> Result<(), String> {
 
 fn bind_err(addr: &str, e: std::io::Error) -> String {
     let hint = match e.kind() {
-        std::io::ErrorKind::PermissionDenied => "（需要管理员权限）",
-        std::io::ErrorKind::AddrInUse => "（端口被占用）",
+        std::io::ErrorKind::PermissionDenied => " (needs admin)",
+        std::io::ErrorKind::AddrInUse => " (port in use)",
         _ => "",
     };
-    format!("监听 {addr} 失败{hint}：{e}")
+    format!("bind {addr} failed{hint}: {e}")
 }
 
 #[derive(Clone, Copy)]
@@ -92,19 +126,26 @@ fn accept_loop(
                 let stats = stats.clone();
                 std::thread::spawn(move || {
                     let _ = s.set_nonblocking(false);
-                    let r = match kind {
-                        Kind::Socks => socks_conn(s, &cfg, stats.clone()),
-                        Kind::Https => https_conn(s, &cfg, stats.clone()),
-                        Kind::Http => http_conn(s, &cfg, stats.clone()),
-                    };
+                    // 单个连接出任何意外都不允许拖垮整个内核
+                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        match kind {
+                            Kind::Socks => socks_conn(s, &cfg, stats.clone()),
+                            Kind::Https => https_conn(s, &cfg, stats.clone()),
+                            Kind::Http => http_conn(s, &cfg, stats.clone()),
+                        }
+                    }))
+                    .unwrap_or_else(|_| {
+                        log_level("ERROR", "connection handler panicked; connection dropped");
+                        Ok(())
+                    });
                     if let Err(e) = r {
                         stats.failed.fetch_add(1, Ordering::Relaxed);
-                        log(&format!("连接处理失败：{e}"));
+                        log_level("WARN", &format!("connection failed: {e}"));
                     }
                 });
             }
             Err(e) => {
-                log(&format!("accept 失败：{e}"));
+                log_level("WARN", &format!("accept failed: {e}"));
                 std::thread::sleep(Duration::from_millis(150));
             }
         }
@@ -125,12 +166,12 @@ fn https_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<
     }
     let len = u16::from_be_bytes([hdr[3], hdr[4]]) as usize;
     if len == 0 || len > 16384 {
-        return Err(format!("记录长度异常：{len}"));
+        return Err(format!("bad record length: {len}"));
     }
     let mut body = vec![0u8; len];
     client
         .read_exact(&mut body)
-        .map_err(|e| format!("读取记录体失败：{e}"))?;
+        .map_err(|e| format!("read record body failed: {e}"))?;
     let mut record = hdr.to_vec();
     record.extend_from_slice(&body);
 
@@ -149,23 +190,23 @@ fn socks_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<
         return Ok(());
     }
     if head[0] != 0x05 {
-        return Err("不是 SOCKS5".to_string());
+        return Err("not SOCKS5".to_string());
     }
     let mut methods = vec![0u8; head[1] as usize];
     client
         .read_exact(&mut methods)
-        .map_err(|e| format!("SOCKS 方法读取失败：{e}"))?;
+        .map_err(|e| format!("socks methods read failed: {e}"))?;
     client
         .write_all(&[0x05, 0x00])
-        .map_err(|e| format!("SOCKS 握手回复失败：{e}"))?;
+        .map_err(|e| format!("socks greeting reply failed: {e}"))?;
 
     let mut req = [0u8; 4];
     client
         .read_exact(&mut req)
-        .map_err(|e| format!("SOCKS 请求读取失败：{e}"))?;
+        .map_err(|e| format!("socks request read failed: {e}"))?;
     if req[1] != 0x01 {
         let _ = client.write_all(&[0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0]);
-        return Err("仅支持 CONNECT".to_string());
+        return Err("only CONNECT is supported".to_string());
     }
     let host = match req[3] {
         0x01 => {
@@ -185,7 +226,7 @@ fn socks_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<
             client.read_exact(&mut a).map_err(|e| e.to_string())?;
             IpAddr::from(a).to_string()
         }
-        other => return Err(format!("未知地址类型 {other}")),
+        other => return Err(format!("unsupported ATYP {other}")),
     };
     let mut port_b = [0u8; 2];
     client.read_exact(&mut port_b).map_err(|e| e.to_string())?;
@@ -193,32 +234,32 @@ fn socks_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<
 
     client
         .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
-        .map_err(|e| format!("SOCKS 回复失败：{e}"))?;
+        .map_err(|e| format!("socks reply failed: {e}"))?;
     if cfg.log_connections {
-        log(&format!("SOCKS CONNECT 已回复：{host}:{port}"));
+        log(&format!("SOCKS CONNECT reply sent: {host}:{port}"));
     }
 
     let mut hdr = [0u8; 5];
     client
         .read_exact(&mut hdr)
-        .map_err(|e| format!("读取记录头失败：{e}"))?;
+        .map_err(|e| format!("read record header failed: {e}"))?;
     if hdr[0] != 0x16 {
-        return Err(format!("目标不是 TLS（首字节 0x{:02x}）", hdr[0]));
+        return Err(format!("target is not TLS (first byte 0x{:02x})", hdr[0]));
     }
     let len = u16::from_be_bytes([hdr[3], hdr[4]]) as usize;
     if len == 0 || len > 16384 {
-        return Err(format!("记录长度异常：{len}"));
+        return Err(format!("bad record length: {len}"));
     }
     let mut body = vec![0u8; len];
     client
         .read_exact(&mut body)
-        .map_err(|e| format!("读取记录体失败：{e}"))?;
+        .map_err(|e| format!("read record body failed: {e}"))?;
     let mut record = hdr.to_vec();
     record.extend_from_slice(&body);
 
     let sni = tls::parse_sni(&record).unwrap_or_else(|| host.clone());
     if cfg.log_connections {
-        log(&format!("SOCKS 目标 {host}:{port} SNI={sni} 首记录 {} 字节", record.len()));
+        log(&format!("SOCKS target {host}:{port} sni={sni} first-record={}B", record.len()));
     }
     relay(client, &record, &host, &sni, port, cfg, stats)
 }
@@ -230,7 +271,7 @@ fn http_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<(
     loop {
         let n = client
             .read(&mut tmp)
-            .map_err(|e| format!("读取 HTTP 请求失败：{e}"))?;
+            .map_err(|e| format!("read HTTP request failed: {e}"))?;
         if n == 0 {
             return Ok(());
         }
@@ -246,20 +287,20 @@ fn http_conn(mut client: TcpStream, cfg: &Config, stats: Arc<Stats>) -> Result<(
             let lower = l.to_ascii_lowercase();
             lower.strip_prefix("host:").map(|v| v.trim().to_string())
         })
-        .ok_or_else(|| "HTTP 请求没有 Host 头".to_string())?;
+        .ok_or_else(|| "HTTP request has no Host header".to_string())?;
     let host = host.split(':').next().unwrap_or(&host).to_string();
 
     let ip = resolve_candidates(&host, &cfg.dns_server)
         .into_iter()
         .next()
-        .ok_or_else(|| format!("{host} 解析失败"))?;
+        .ok_or_else(|| format!("{host}: resolve failed"))?;
     let mut remote =
         TcpStream::connect_timeout(&SocketAddr::new(ip, 80), Duration::from_secs(6))
-            .map_err(|e| format!("连接 {host} 失败：{e}"))?;
+            .map_err(|e| format!("connect {host} failed: {e}"))?;
     remote
         .write_all(&buf)
-        .map_err(|e| format!("转发 HTTP 请求失败：{e}"))?;
-    log(&format!("{host} → {ip}:80（HTTP 直连）"));
+        .map_err(|e| format!("forward HTTP request failed: {e}"))?;
+    log(&format!("{host} -> {ip}:80 (HTTP direct)"));
     pump(client, remote, None, stats)
 }
 
@@ -274,19 +315,19 @@ fn relay(
 ) -> Result<(), String> {
     let candidates = resolve_candidates(connect_host, &cfg.dns_server);
     if candidates.is_empty() {
-        return Err(format!("{host} 解析失败（没有可用的 A 记录）"));
+        return Err(format!("{host}: no usable A record"));
     }
 
     let matched = cfg.matches(host);
     let fragmented = matched && cfg.fragment.mode != "off";
     let (payload, how) = build_payload(record, cfg, fragmented);
 
-    let mut last = String::from("无可用 IP");
+    let mut last = String::from("no usable IP");
     for (idx, ip) in candidates.iter().enumerate() {
         match connect_probe(&payload, *ip, port) {
             Ok(Some((remote, first))) => {
                 if cfg.log_connections {
-                    log(&format!("{host} → {ip}（{how}）"));
+                    log(&format!("{host} -> {ip} ({how})"));
                 }
                 if matched {
                     stats.fragmented.fetch_add(1, Ordering::Relaxed);
@@ -294,19 +335,19 @@ fn relay(
                 return pump(client, remote, Some(first), stats);
             }
             Ok(None) => {
-                log(&format!("{host} 在 {ip} 上没有响应，换下一个候选"));
-                last = format!("{ip} 无响应");
+                log_level("WARN", &format!("{host}: no response from {ip}, trying next candidate"));
+                last = format!("{ip} no response");
             }
             Err(e) => {
-                log(&format!("{host} 连接 {ip} 失败：{e}"));
+                log_level("WARN", &format!("{host}: connect to {ip} failed: {e}"));
                 last = e;
             }
         }
         if idx + 1 < candidates.len() && cfg.log_connections {
-            log(&format!("{host} 重试候选 #{}", idx + 2));
+            log(&format!("{host}: retry candidate #{}", idx + 2));
         }
     }
-    Err(format!("{host} 全部候选 IP 失败：{last}"))
+    Err(format!("{host}: all candidate IPs failed ({last})"))
 }
 
 /// 按分片配置生成要发出去的首包（以及给日志用的描述）。
@@ -315,22 +356,22 @@ fn build_payload(record: &[u8], cfg: &Config, fragmented: bool) -> (Vec<u8>, Str
         // 优先「切在 SNI 域名中间」拆成 2 条记录：任何一条记录里都不含完整域名
         // （参照 campus-tls-fix 的实现）。
         let (parts, how) = match tls::split_mid_sni(record) {
-            Some(p) => (p, "切在 SNI 中间"),
+            Some(p) => (p, "split mid-SNI"),
             None => (
                 tls::split_record(record, cfg.fragment.parts as usize),
-                "等分",
+                "even split",
             ),
         };
         let mut buf = Vec::with_capacity(record.len() + 5 * parts.len());
         for p in &parts {
             buf.extend_from_slice(p);
         }
-        (buf, format!("TLS Record {} 段，{}", parts.len(), how))
+        (buf, format!("TLS record x{} ({})", parts.len(), how))
     } else if fragmented {
         let parts = tls::segment_chunks(record, cfg.fragment.parts as usize);
-        (parts.concat(), format!("TCP 分段 {} 段", parts.len()))
+        (parts.concat(), format!("TCP segments x{}", parts.len()))
     } else {
-        (record.to_vec(), "未分片".to_string())
+        (record.to_vec(), "no fragment".to_string())
     }
 }
 
@@ -342,12 +383,12 @@ fn connect_probe(
     port: u16,
 ) -> Result<Option<(TcpStream, Vec<u8>)>, String> {
     let mut remote = TcpStream::connect_timeout(&SocketAddr::new(ip, port), Duration::from_secs(5))
-        .map_err(|e| format!("连接失败：{e}"))?;
+        .map_err(|e| format!("connect failed: {e}"))?;
     let _ = remote.set_nodelay(true);
     remote
         .write_all(payload)
-        .map_err(|e| format!("发送失败：{e}"))?;
-    log(&format!("  已发送首包 {payload_bytes} 字节到 {ip}:{port}", payload_bytes = payload.len()));
+        .map_err(|e| format!("send failed: {e}"))?;
+    log(&format!("  probe sent {}B to {ip}:{port}", payload.len()));
 
     remote
         .set_read_timeout(Some(Duration::from_secs(4)))
@@ -355,16 +396,16 @@ fn connect_probe(
     let mut buf = [0u8; 8192];
     match remote.read(&mut buf) {
         Ok(0) => {
-            log(&format!("  {ip} 立即关闭（EOF）"));
+            log_level("WARN", &format!("  {ip} closed immediately (EOF)"));
             Ok(None)
         }
         Ok(n) => {
-            log(&format!("  {ip} 回应 {n} 字节"));
+            log(&format!("  {ip} replied {n}B"));
             remote.set_read_timeout(None).ok();
             Ok(Some((remote, buf[..n].to_vec())))
         }
         Err(e) => {
-            log(&format!("  {ip} 无回应（{e}）"));
+            log_level("WARN", &format!("  {ip} no reply ({e})"));
             Ok(None)
         }
     }
@@ -451,7 +492,7 @@ fn resolve_candidates(host: &str, preferred: &str) -> Vec<IpAddr> {
             }
         }
         if !out.is_empty() {
-            log(&format!("{host} 经 DoH 解析到 {} 个 IP", out.len()));
+            log(&format!("{host}: resolved {} IP(s) via DoH", out.len()));
             break;
         }
     }
@@ -470,30 +511,6 @@ fn resolve_candidates(host: &str, preferred: &str) -> Vec<IpAddr> {
     out
 }
 
-fn resolve_via(host: &str, servers: &[String]) -> Option<IpAddr> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    for server in servers {
-        let host = host.to_string();
-        let server = server.clone();
-        let tx = tx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(dns::resolve_any(&host, &server));
-        });
-    }
-    drop(tx);
-    let deadline = std::time::Instant::now() + Duration::from_millis(3500);
-    loop {
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
-        if left.is_zero() {
-            return None;
-        }
-        match rx.recv_timeout(left) {
-            Ok(Ok(ip)) => return Some(ip),
-            Ok(Err(_)) => continue,
-            Err(_) => return None,
-        }
-    }
-}
 
 fn resolver_candidates(preferred: &str) -> Vec<String> {
     let mut v = vec![preferred.trim().to_string()];
@@ -517,10 +534,10 @@ fn pump(
 ) -> Result<(), String> {
     let mut c2 = client
         .try_clone()
-        .map_err(|e| format!("复制套接字失败：{e}"))?;
+        .map_err(|e| format!("socket clone failed: {e}"))?;
     let mut r2 = remote
         .try_clone()
-        .map_err(|e| format!("复制套接字失败：{e}"))?;
+        .map_err(|e| format!("socket clone failed: {e}"))?;
     let up_stats = stats.clone();
 
     let up_thread = std::thread::spawn(move || {
@@ -548,7 +565,7 @@ fn pump(
         if !bytes.is_empty() {
             client
                 .write_all(&bytes)
-                .map_err(|e| format!("回写首段失败：{e}"))?;
+                .map_err(|e| format!("write first chunk failed: {e}"))?;
             total += bytes.len() as u64;
         }
     }

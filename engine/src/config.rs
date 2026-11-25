@@ -134,6 +134,9 @@ pub struct FileConfig {
     pub fragment: Fragment,
     #[serde(default, alias = "dns_server", alias = "doh")]
     pub dns: Option<String>,
+    /// 启动前检查系统 hosts 是否把这些域名指到本机（默认开）
+    #[serde(default)]
+    pub check_hosts: Option<bool>,
 }
 
 /// 运行时配置。
@@ -147,6 +150,7 @@ pub struct Config {
     pub fragment: Fragment,
     pub dns_server: String,
     pub log_connections: bool,
+    pub check_hosts: bool,
 }
 
 impl Default for Config {
@@ -160,6 +164,7 @@ impl Default for Config {
             fragment: Fragment::default(),
             dns_server: d_dns(),
             log_connections: true,
+            check_hosts: true,
         }
     }
 }
@@ -188,6 +193,7 @@ impl Config {
             fragment: fc.fragment,
             dns_server: fc.dns.unwrap_or_else(d_dns),
             log_connections: true,
+            check_hosts: fc.check_hosts.unwrap_or(true),
         };
         cfg.sanitize();
         Ok(cfg)
