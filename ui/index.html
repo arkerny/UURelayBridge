@@ -119,11 +119,9 @@
         </div>
         <div class="pane-body">
           <div class="form">
-            <label class="field">
-              <span>域名</span>
-              <textarea id="hostDomains" rows="5" spellcheck="false"
-                placeholder="+.nrd.nie.163.com&#10;*.example.com&#10;*"></textarea>
-            </label>
+            <div class="notice">
+              域名在「规则」页统一维护。这里只调整内核的监听与分片参数。
+            </div>
 
             <div class="grid3">
               <label class="field"><span>端口</span>
@@ -152,10 +150,6 @@
               <option value="223.5.5.5">AliDNS · UDP</option>
             </datalist>
 
-            <label class="row">
-              <input type="checkbox" id="hostLinkClash" />
-              <span>同一份域名也写进 Clash 脚本</span>
-            </label>
           </div>
         </div>
         <div class="pane-foot">
@@ -198,40 +192,50 @@
         </div>
       </div>
 
-      <!-- 规则编辑面板：嵌在规则页内，不覆盖全局 -->
-      <div class="pane editor" id="ruleEditor" hidden>
-        <div class="pane-head">
-          <h2 id="ruleTitle">新建规则</h2>
-          <div class="pane-actions">
-            <button class="btn tiny ghost" id="ruleCancel">取消</button>
-            <button class="btn tiny" id="ruleOk">保存规则</button>
+    </section>
+
+    <!-- 规则编辑：全屏浮动弹窗，保存或取消前不能切换选项卡 -->
+    <div class="modal editor-modal" id="ruleEditor" hidden>
+      <div class="modal-box rule-editor">
+        <div class="editor-head">
+          <h3 id="ruleTitle">新建规则</h3>
+          <span class="muted small">域名与动作在这里统一定义</span>
+        </div>
+
+        <div class="editor-body">
+          <label class="field">
+            <span>名称</span>
+            <input id="fName" placeholder="例如 UU 远程" />
+          </label>
+          <label class="field">
+            <span>匹配域名（每行一个，支持通配符）</span>
+            <textarea id="fDomains" rows="6" spellcheck="false"
+              placeholder="+.nrd.nie.163.com&#10;*.example.com&#10;*"></textarea>
+            <span class="hint">
+              <code>a.com</code> 含子域 · <code>*.a.com</code> 仅子域 ·
+              <code>+.a.com</code> 根域加子域 · <code>*</code> 全部域名
+            </span>
+          </label>
+          <div class="grid2">
+            <label class="field"><span>动作</span>
+              <select id="fAction">
+                <option value="proxy">代理</option>
+                <option value="direct">直连</option>
+                <option value="reject">拦截</option>
+              </select></label>
+            <label class="field" id="fGroupField"><span>策略组</span>
+              <input id="fGroup" placeholder="必须与你的 Clash 配置一致" /></label>
           </div>
         </div>
-        <div class="pane-body">
-          <div class="form">
-            <label class="field">
-              <span>名称</span>
-              <input id="fName" placeholder="例如 UU 远程" />
-            </label>
-            <label class="field">
-              <span>匹配域名（每行一个）</span>
-              <textarea id="fDomains" rows="4" spellcheck="false"
-                placeholder="+.nrd.nie.163.com"></textarea>
-            </label>
-            <div class="grid2">
-              <label class="field"><span>动作</span>
-                <select id="fAction">
-                  <option value="proxy">代理</option>
-                  <option value="direct">直连</option>
-                  <option value="reject">拦截</option>
-                </select></label>
-              <label class="field" id="fGroupField"><span>策略组</span>
-                <input id="fGroup" placeholder="必须与你的 Clash 配置一致" /></label>
-            </div>
-          </div>
+
+        <div class="modal-actions">
+          <button class="btn ghost" id="ruleCancel">取消</button>
+          <button class="btn" id="ruleOk">保存规则</button>
         </div>
       </div>
-    </section>
+    </div>
+
+
 
     <!-- 日志 -->
     <section class="page" id="page-logs">

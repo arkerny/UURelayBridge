@@ -39,6 +39,20 @@ pub fn run(app: tauri::AppHandle) {
                 Ok(s) => commands::log(&app, "ok", "keepalive", format!("recovered: {}", s.view())),
                 Err(e) => {
                     commands::log(&app, "error", "keepalive", format!("restart failed: {e}"));
+                    // 配置类错误（例如没有启用规则）重试也不会成功：
+                    // 关掉开关并停在这里，避免每 5 秒刷一次同样的错误。
+                    if is_config_error(&e) {
+                        commands::log(
+                            &app,
+                            "warn",
+                            "keepalive",
+                            "configuration problem; auto-restart paused",
+                        );
+                        if let Ok(mut s) = rt.settings.write() {
+                            s.set_mode_enabled(false);
+                            let _ = crate::state::settings::save_settings(&rt.paths.settings(), &s);
+                        }
+                    }
                     commands::emit_state(&app);
                     continue;
                 }
@@ -82,4 +96,12 @@ pub fn run(app: tauri::AppHandle) {
             commands::emit_state(&app);
         }
     }
+}
+
+/// 判断是否是「重试也没用」的配置类错误。
+fn is_config_error(msg: &str) -> bool {
+    msg.contains("域名规则")
+        || msg.contains("domains")
+        || msg.contains("不能为空")
+        || msg.contains("配置")
 }

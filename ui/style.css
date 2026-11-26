@@ -319,3 +319,69 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   .sidebar { width: 160px; flex-basis: 160px; }
   .brand strong { display: none; }
 }
+
+/* ============================================================================
+   规则编辑：全屏浮动弹窗（保存或取消前锁定界面）
+   ========================================================================== */
+.editor-modal { z-index: 80; }
+
+.rule-editor {
+  width: min(720px, 94vw);
+  max-height: min(86vh, 760px);
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--mode-weak);
+}
+.editor-head h3 { margin: 0; font-size: 14.5px; color: var(--mode); }
+
+.editor-body {
+  padding: 16px 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  flex: 1 1 auto;
+}
+
+.rule-editor .modal-actions {
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+  margin: 0;
+}
+
+/* 提示块 */
+.notice {
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.hint { color: var(--muted); font-size: 11.5px; line-height: 1.9; }
+
+/* 弹窗打开时：整页不可交互，只有弹窗可点 */
+body.modal-open .page,
+body.modal-open .sidebar,
+body.modal-open .main-head {
+  filter: saturate(.82) brightness(.985);
+}
+body.modal-open .nav-item,
+body.modal-open .mode-btn,
+body.modal-open #toggleEnabled,
+body.modal-open #btnRestart {
+  pointer-events: none;
+  opacity: .55;
+}

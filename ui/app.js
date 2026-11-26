@@ -244,13 +244,11 @@
     if (!v) return;
     const c = v.config || {};
     if (!HOST.dirty) {
-      $("hostDomains").value = (c.domains || []).join("\n");
       $("hostPort").value = c.listen_port;
       $("hostMode").value = c.fragment_mode;
       $("hostParts").value = c.fragment_parts;
       $("hostSocksPort").value = c.socks_port;
       $("hostDns").value = c.dns_server;
-      $("hostLinkClash").checked = !!c.link_clash;
     }
   }
 
@@ -260,11 +258,9 @@
       listen_port: parseInt($("hostPort").value || "443", 10),
       http_port: 80,
       socks_port: parseInt($("hostSocksPort").value || "7899", 10),
-      domains: $("hostDomains").value.split("\n").map((x) => x.trim()).filter(Boolean),
       fragment_mode: $("hostMode").value,
       fragment_parts: parseInt($("hostParts").value || "4", 10),
       dns_server: $("hostDns").value.trim() || "223.5.5.5",
-      link_clash: $("hostLinkClash").checked,
     };
   }
 
@@ -397,7 +393,19 @@
     $("fGroup").value = act.outbound || "";
     syncGroupField();
     $("ruleEditor").hidden = false;
-    $("ruleEditor").scrollIntoView({ block: "nearest" });
+    // 锁定界面：保存或取消之前不能切页/切模式/拨开关
+    document.body.classList.add("modal-open");
+    $("fName").focus();
+  }
+
+  function closeRule() {
+    $("ruleEditor").hidden = true;
+    document.body.classList.remove("modal-open");
+    RULE.editing = null;
+  }
+
+  function ruleEditorOpen() {
+    return !$("ruleEditor").hidden;
   }
 
   function syncGroupField() {
@@ -430,7 +438,7 @@
     else rules.push(rule);
     const project = Object.assign({}, S.snap.project, { rules });
     S.snap = await api("save_project", { project, approved: true });
-    $("ruleEditor").hidden = true;
+    closeRule();
     renderRules();
     renderAll();
     toast("规则已保存");
@@ -496,16 +504,31 @@
   /* ---------------- 绑定 ---------------- */
   function bind() {
     document.querySelectorAll(".nav-item").forEach((n) => {
-      n.addEventListener("click", () => switchTab(n.dataset.tab));
+      n.addEventListener("click", () => {
+        if (ruleEditorOpen()) {
+          toast("请先保存或取消当前规则", "warn", 1800);
+          return;
+        }
+        switchTab(n.dataset.tab);
+      });
     });
 
     $("modeSwitch").addEventListener("click", (e) => {
       const btn = e.target.closest(".mode-btn");
       if (!btn || btn.dataset.mode === currentMode()) return;
+      if (ruleEditorOpen()) {
+        toast("请先保存或取消当前规则", "warn", 1800);
+        return;
+      }
       switchMode(btn.dataset.mode);
     });
 
     $("toggleEnabled").addEventListener("change", (ev) => {
+      if (ruleEditorOpen()) {
+        ev.target.checked = !ev.target.checked;
+        toast("请先保存或取消当前规则", "warn", 1800);
+        return;
+      }
       toggleEnabled(ev.target.checked);
     });
 
@@ -543,11 +566,11 @@
     $("btnHostApplyHosts").addEventListener("click", () => applyHosts());
     $("btnHostClearHosts").addEventListener("click", () => clearHosts());
     $("btnHostRestore").addEventListener("click", () => restoreHosts());
-    ["hostDomains", "hostPort", "hostMode", "hostParts", "hostSocksPort", "hostDns", "hostLinkClash"]
+    ["hostPort", "hostMode", "hostParts", "hostSocksPort", "hostDns"]
       .forEach((id) => $(id).addEventListener("change", () => (HOST.dirty = true)));
 
     $("btnAddRule").addEventListener("click", () => openRule(null));
-    $("ruleCancel").addEventListener("click", () => ($("ruleEditor").hidden = true));
+    $("ruleCancel").addEventListener("click", () => closeRule());
     $("ruleOk").addEventListener("click", () => guard(applyRuleForm));
     $("fAction").addEventListener("change", syncGroupField);
 

@@ -95,14 +95,34 @@ fn paths_view(rt: &AppRuntime, target: &str) -> PathsView {
     }
 }
 
+/// 从启用的规则里收集域名（去重、保持顺序）。
+/// 域名只由「规则」管理，配置页不再单独维护一份。
+pub fn rule_domains(project: &Project) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for rule in &project.rules {
+        if !rule.enabled {
+            continue;
+        }
+        for d in &rule.match_.domain {
+            let d = d.trim().trim_end_matches('.').to_ascii_lowercase();
+            if !d.is_empty() && !out.contains(&d) {
+                out.push(d);
+            }
+        }
+    }
+    out
+}
+
 /// SNI 联动：把 Host 模式里的域名/参数转成适配器能用的形式。
 /// Clash 模式走本机 SOCKS5；Host 模式才用 dns.hosts 指到 443。
 pub fn sni_link(rt: &AppRuntime) -> adapters::SniLink {
     let h = rt.host_config();
     let mode = rt.settings().mode;
+    // 域名以规则为准
+    let domains = rule_domains(&rt.project());
     adapters::SniLink {
-        enabled: h.link_clash && !h.domains.is_empty(),
-        domains: h.domains.clone(),
+        enabled: h.link_clash && !domains.is_empty(),
+        domains,
         mode: h.fragment_mode.clone(),
         parts: h.fragment_parts,
         socks_port: if mode == "host" { None } else { Some(h.socks_port) },
@@ -400,7 +420,15 @@ fn host_logger(app: &AppHandle) -> std::sync::Arc<dyn Fn(&str) + Send + Sync> {
 
 /// 按当前模式启动服务：clash → SOCKS；host → 80/443。
 pub fn start_service(app: &AppHandle, rt: &AppRuntime) -> Result<ServiceStatus, String> {
-    let cfg = rt.host_config();
+    let mut cfg = rt.host_config();
+    // 域名只来自规则
+    cfg.domains = rule_domains(&rt.project());
+    if cfg.domains.is_empty() {
+        return Err(
+            "还没有启用任何域名规则。请到「规则」页添加（可点「填入 UU」快速生成）。"
+                .to_string(),
+        );
+    }
     let mode = rt.settings().mode;
     hostmode::start(&mode, &cfg, &rt.paths.root, host_logger(app)).map(|st| {
         rt.log(
@@ -534,6 +562,8 @@ pub fn host_set_config(
         ));
     }
     let mut cfg = config;
+    // 域名由规则页维护，这里保留旧值（前端不再传）
+    cfg.domains = rt.host_config().domains;
     cfg.sanitize();
     hostmode::save_config(&rt.paths.root, &cfg)
         .map_err(|e| CommandError::new("io_error", format!("保存 hostmode.json 失败：{e}")))?;
@@ -609,10 +639,17 @@ pub fn host_apply_hosts(
             "修改系统 hosts 需要管理员权限，需要你的确认",
         ));
     }
-    let cfg = rt.host_config();
-    if cfg.domains.is_empty() {
-        return Err(CommandError::new("bad_config", "没有要写入 hosts 的域名"));
+    let domains = rule_domains(&rt.project());
+    if domains.is_empty() {
+        return Err(CommandError::new(
+            "bad_config",
+            "还没有启用任何域名规则，请先到「规则」页添加",
+        ));
     }
+    // 保存配置时把规则域名同步进 hostmode.json，供内核与提权子进程读取
+    let mut cfg = rt.host_config();
+    cfg.domains = domains.clone();
+    cfg.sanitize();
     hostmode::save_config(&rt.paths.root, &cfg).ok();
 
     let root = rt.paths.root.clone();
@@ -622,7 +659,6 @@ pub fn host_apply_hosts(
     }
 
     let handle = app.clone();
-    let domains = cfg.domains.clone();
     std::thread::spawn(move || {
         let rt = handle.state::<AppRuntime>();
         let _ = std::fs::remove_file(hostmode::elevate::op_result_path(&root));
