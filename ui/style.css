@@ -305,9 +305,19 @@ table.rules td code { font-size: 11.5px; }
 .toast.warn { background: var(--warn); }
 .toast.err { background: var(--danger); }
 
-/* 忙碌态：整页轻微淡出，提示正在处理 */
-body.busy .page { opacity: .72; pointer-events: none; }
-body.busy .btn { pointer-events: none; }
+/* 忙碌态：只让"页面内容"暂时不可点。
+   注意不能命中模态框（.modal）——确认框的按钮必须始终可点，
+   否则模式切换等需要二次确认的操作会彻底卡死。 */
+body.busy .page { opacity: .72; }
+body.busy .page > *,
+body.busy .sidebar .nav,
+body.busy .mode-switch,
+body.busy #btnRestart,
+body.busy #enabledSwitch { pointer-events: none; }
+
+/* 模态框永远可交互，不受忙碌态影响 */
+.modal { pointer-events: auto; }
+.modal .btn { pointer-events: auto; }
 
 /* 通用 */
 code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }

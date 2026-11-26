@@ -73,7 +73,7 @@
     try {
       await fn();
     } catch (e) {
-      const msg = typeof e === "string" ? e : (e && e.message) || JSON.stringify(e);
+      const msg = errText(e);
       // 后端校验失败会带回 issues，展示到检查面板，避免用户只看到一句"未保存"
       if (e && Array.isArray(e.issues) && e.issues.length) {
         renderIssues(e.issues);
@@ -85,6 +85,10 @@
     } finally {
       setBusy(false);
     }
+  }
+
+  function errText(e) {
+    return typeof e === "string" ? e : (e && e.message) || JSON.stringify(e);
   }
 
   function esc(s) {
@@ -360,18 +364,32 @@
   }
 
   async function switchMode(next) {
+    if (S.busy) {
+      toast("正在处理上一个操作，请稍候…", "warn", 1400);
+      return;
+    }
+    // 先问后端"需不需要确认"，再决定是否弹框：
+    // 确认框必须在 guard 之外，否则会被忙碌态干扰。
+    let probe;
+    try {
+      probe = await api("set_mode", { mode: next, confirmStop: false });
+    } catch (e) {
+      toast(errText(e), "err", 5000);
+      return;
+    }
+    if (probe.needs_confirm) {
+      const label = probe.running_mode === "host" ? "Host 模式" : "SOCKS 模式";
+      const ok = await confirmDialog(
+        "切换模式",
+        "当前 <b>" + label + "</b> 的内核仍在运行。<br/>" +
+        "切换前需要先关闭它，关闭后该模式的连接会立即中断。"
+      );
+      if (!ok) return;
+    }
     await guard(async () => {
-      let r = await api("set_mode", { mode: next, confirmStop: false });
-      if (r.needs_confirm) {
-        const label = r.running_mode === "host" ? "Host 模式" : "SOCKS 模式";
-        const ok = await confirmDialog(
-          "切换模式",
-          "当前 <b>" + label + "</b> 的内核仍在运行。<br/>" +
-          "切换前需要先关闭它，关闭后该模式的连接会立即中断。"
-        );
-        if (!ok) return;
-        r = await api("set_mode", { mode: next, confirmStop: true });
-      }
+      const r = probe.needs_confirm
+        ? await api("set_mode", { mode: next, confirmStop: true })
+        : probe;
       S.snap = r.snapshot;
       renderAll();
       if (next === "host") await loadHost();
