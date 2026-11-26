@@ -33,7 +33,19 @@ impl Default for Project {
         Self {
             schema_version: MODEL_SCHEMA_VERSION,
             name: default_project_name(),
-            rules: Vec::new(),
+            // 预置一条 UU 规则：全新安装后打开开关即可工作
+            rules: vec![Rule {
+                id: "uu-default".to_string(),
+                name: "UU 远程".to_string(),
+                enabled: true,
+                action: Action::Proxy {
+                    outbound: "Proxy".to_string(),
+                },
+                match_: Match {
+                    domain: crate::presets::uu_domains(),
+                    ip_cidr: Vec::new(),
+                },
+            }],
         }
     }
 }

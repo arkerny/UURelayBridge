@@ -21,7 +21,7 @@ fn d_theme() -> String {
     "system".to_string()
 }
 fn d_mode() -> String {
-    "clash".to_string()
+    "socks".to_string()
 }
 
 /// 使用方式：clash = 生成规则脚本；host = 本机转发
@@ -169,6 +169,8 @@ pub fn load_settings(path: &Path) -> Loaded<Settings> {
         },
         Ok(Some(text)) => match serde_json::from_str::<Settings>(&text) {
             Ok(mut s) => {
+                // 读进来先规范化：旧版本的 mode / enabled 在这里迁移成新字段
+                s.sanitize();
                 let mut issue = None;
                 if s.schema_version > MODEL_SCHEMA_VERSION {
                     issue = Some(format!(
@@ -341,7 +343,11 @@ mod tests {
     fn project_defaults_are_empty() {
         let d = tmpdir("proj");
         let l = load_project(&d.join("project.json"));
-        assert!(l.value.rules.is_empty());
+        // 默认项目预置一条 UU 规则，保证全新安装打开开关就能用
+        assert_eq!(l.value.rules.len(), 1, "应预置一条规则");
+        assert_eq!(l.value.rules[0].id, "uu-default");
+        assert!(l.value.rules[0].enabled);
+        assert!(!l.value.rules[0].match_.domain.is_empty(), "应有默认域名");
         assert!(!l.existed);
         std::fs::remove_dir_all(&d).unwrap();
     }

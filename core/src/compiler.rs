@@ -110,7 +110,11 @@ mod tests {
 
     #[test]
     fn empty_project_compiles_to_nothing() {
-        let c = compile(&Project::default());
+        let empty = Project {
+            rules: Vec::new(),
+            ..Default::default()
+        };
+        let c = compile(&empty);
         assert!(c.is_empty());
         assert!(c.skipped.is_empty());
     }
