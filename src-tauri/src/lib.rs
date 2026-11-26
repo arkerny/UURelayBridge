@@ -510,8 +510,10 @@ pub fn run() {
                         ),
                         Err(e) => {
                             commands::log(&h, "error", "host", format!("启动服务失败：{e}"));
+                            // 必须清当前模式的开关，否则每次启动都会重试，
+                            // 界面开关也会一直停在"开"的状态。
                             if let Ok(mut s) = rt.settings.write() {
-                                s.enabled = false;
+                                s.set_mode_enabled(false);
                                 let _ = state::settings::save_settings(&rt.paths.settings(), &s);
                             }
                             commands::emit_state(&h);

@@ -485,7 +485,8 @@ pub fn try_elevate_for_service(app: &AppHandle, err: &str) -> bool {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        s.enabled = true;
+        // 记录"提权后要接着启动"，按当前模式落位
+        s.set_mode_enabled(true);
         let _ = crate::state::settings::save_settings(&rt.paths.settings(), &s);
     }
     match hostmode::elevate::relaunch_elevated(&rt.paths.root) {
@@ -634,7 +635,7 @@ pub fn service_stop(app: AppHandle, rt: State<'_, AppRuntime>) -> HostView {
             Ok(g) => g,
             Err(p) => p.into_inner(),
         };
-        s.enabled = false;
+        s.set_mode_enabled(false);
         let _ = crate::state::settings::save_settings(&rt.paths.settings(), &s);
     }
     stop_service(&rt);
