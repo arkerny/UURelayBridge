@@ -10,6 +10,8 @@
   "use strict";
 
   const S = { snap: null, busy: false, tab: "overview" };
+  // 日志是否跟随底部（用户向上翻看时自动设为 false）
+  let logStickToBottom = true;
   const HOST = { view: null, dirty: false };
   const RULE = { editing: null };
   let PRESETS = null;
@@ -118,6 +120,17 @@
       p.classList.toggle("active", p.id === "page-" + name);
     });
     $("pageTitle").textContent = TITLES[name] || "";
+
+    // 打开日志页时滚到最新一条（此时元素已可见，scrollHeight 才有值）
+    if (name === "logs") {
+      const box = $("logBox");
+      if (box) {
+        requestAnimationFrame(() => {
+          box.scrollTop = box.scrollHeight;
+          logStickToBottom = true;
+        });
+      }
+    }
   }
 
   function applyMode() {
@@ -230,9 +243,15 @@
 
   /* ---------------- 日志 ---------------- */
   const LOG_MAX = 800;
+
+  function logAtBottom(box) {
+    return box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+  }
+
   function addLog(entry) {
     const box = $("logBox");
     if (!box) return;
+    const stick = logStickToBottom || logAtBottom(box);
     const line = document.createElement("div");
     line.className = "log-line " + (entry.level || "info");
     line.textContent =
@@ -241,7 +260,10 @@
       (entry.message || "");
     box.appendChild(line);
     while (box.childElementCount > LOG_MAX) box.removeChild(box.firstChild);
-    box.scrollTop = box.scrollHeight;
+    if (stick) {
+      box.scrollTop = box.scrollHeight;
+      logStickToBottom = true;
+    }
   }
 
   /* ---------------- Host 配置 ---------------- */
@@ -638,8 +660,24 @@
     $("btnOpenLogFile").addEventListener("click", () => guard(() => api("open_data_dir")));
     $("btnClearLogs").addEventListener("click", () => ($("logBox").innerHTML = ""));
 
+    // 用户手动滚动时，更新"是否跟随底部"
+    $("logBox").addEventListener("scroll", () => {
+      logStickToBottom = logAtBottom($("logBox"));
+    });
+
     if (hasBackend()) {
-      window.__TAURI__.event.listen("state-changed", async () => {
+      const ev = window.__TAURI__.event;
+      // 后端每次写日志都会 emit rb://log，这里实时追加
+      ev.listen("rb://log", (e) => {
+        if (e && e.payload) addLog(e.payload);
+      });
+      ev.listen("rb://state", async () => {
+        S.snap = await api("bootstrap");
+        renderAll();
+        renderRules();
+      });
+      // 兼容旧事件名
+      ev.listen("state-changed", async () => {
         S.snap = await api("bootstrap");
         renderAll();
         renderRules();
