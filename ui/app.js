@@ -50,9 +50,26 @@
     });
   }
 
+  // 操作互斥：正在执行时给出可见反馈，而不是静默丢弃（用户会以为点了没反应）
+  function setBusy(on) {
+    S.busy = on;
+    document.body.classList.toggle("busy", on);
+    const tg = $("toggleEnabled");
+    if (tg) {
+      tg.disabled = on;
+      if (!on && S.snap) {
+        const s = S.snap.settings;
+        tg.checked = currentMode() === "host" ? !!s.enabled_host : !!s.enabled_socks;
+      }
+    }
+  }
+
   async function guard(fn) {
-    if (S.busy) return;
-    S.busy = true;
+    if (S.busy) {
+      toast("正在处理上一个操作，请稍候…", "warn", 1400);
+      return;
+    }
+    setBusy(true);
     try {
       await fn();
     } catch (e) {
@@ -60,7 +77,7 @@
       toast(msg, "err", 5000);
       console.error(e);
     } finally {
-      S.busy = false;
+      setBusy(false);
     }
   }
 
@@ -139,7 +156,9 @@
     const s = S.snap.settings;
     const svc = S.snap.service || {};
 
-    $("toggleEnabled").checked = !!s.enabled;
+    // 开关状态取“当前模式”的字段，而不是全局旧字段
+    const modeOn = currentMode() === "host" ? !!s.enabled_host : !!s.enabled_socks;
+    $("toggleEnabled").checked = modeOn;
     $("appMeta").textContent = "v" + S.snap.app_version;
 
     // 侧栏状态
@@ -363,8 +382,8 @@
         "<tr>" +
         '<td><input type="checkbox" data-rule="' + esc(r.id) + '"' + (r.enabled ? " checked" : "") + " /></td>" +
         "<td>" + esc(r.name || r.id) + "</td>" +
-        "<td><code>" + esc((r.match && r.match.domains || []).join("<br>")) + "</code></td>" +
-        "<td>" + esc(r.action) + "</td>" +
+        "<td><code>" + esc((r.match && r.match.domain || []).join("<br>")) + "</code></td>" +
+        "<td>" + esc((r.action && r.action.type) || r.action) + "</td>" +
         '<td>' +
         '<button class="btn tiny ghost" data-edit="' + esc(r.id) + '">编辑</button> ' +
         '<button class="btn tiny ghost danger" data-del="' + esc(r.id) + '">删</button>' +
@@ -380,9 +399,10 @@
     RULE.editing = rule ? rule.id : null;
     $("ruleTitle").textContent = rule ? "编辑规则" : "新建规则";
     $("fName").value = rule ? (rule.name || "") : "";
-    $("fDomains").value = rule ? ((rule.match && rule.match.domains) || []).join("\n") : "";
-    $("fAction").value = rule ? rule.action : "proxy";
-    $("fGroup").value = rule && rule.outbound ? rule.outbound : "";
+    $("fDomains").value = rule ? ((rule.match && rule.match.domain) || []).join("\n") : "";
+    const act = rule && rule.action ? rule.action : { type: "proxy" };
+    $("fAction").value = act.type || "proxy";
+    $("fGroup").value = act.outbound || "";
     $("fGroupRow").hidden = $("fAction").value !== "proxy";
     $("ruleModal").hidden = false;
   }
@@ -399,13 +419,15 @@
       toast("代理动作需要填策略组名", "warn");
       return;
     }
+    // 后端 Action 是内部标签枚举：{ type: "proxy", outbound } / { type: "direct" } / { type: "reject" }
+    const actionValue =
+      action === "proxy" ? { type: "proxy", outbound } : { type: action };
     const rule = {
       id: RULE.editing || ("rule-" + Date.now()),
       name: $("fName").value.trim() || domains[0],
       enabled: true,
-      action,
-      outbound: action === "proxy" ? outbound : null,
-      match: { domains },
+      action: actionValue,
+      match: { domain: domains },
     };
     const rules = ((S.snap.project && S.snap.project.rules) || []).slice();
     const idx = rules.findIndex((r) => r.id === rule.id);
@@ -483,7 +505,7 @@
       const next = btn.dataset.mode;
       guard(async () => {
         // 第一次尝试：如果旧模式还在跑，后端会要求确认
-        let r = await api("set_mode", { mode: next, confirm_stop: false });
+        let r = await api("set_mode", { mode: next, confirmStop: false });
         if (r.needs_confirm) {
           const label = r.running_mode === "host" ? "Host 模式" : "SOCKS 模式";
           const ok = await confirmDialog(
@@ -492,7 +514,7 @@
             "切换前需要先关闭它，关闭后该模式的连接会立即中断。"
           );
           if (!ok) return;
-          r = await api("set_mode", { mode: next, confirm_stop: true });
+          r = await api("set_mode", { mode: next, confirmStop: true });
         }
         S.snap = r.snapshot;
         renderAll();
@@ -523,7 +545,7 @@
     $("btnExportScript").addEventListener("click", () => guard(async () => {
       const ok = await confirmDialog("导出脚本", "会写入输出目录，并生成备份与清单。");
       if (!ok) return;
-      await api("generate", { approved: true });
+      await api("regenerate", { approved: true });
       toast("已导出");
     }));
 
@@ -568,7 +590,7 @@
         name: "UU 远程",
         enabled: true,
         action: "proxy",
-        match: { domains: p.uu_domains || ["+.nrd.nie.163.com"] },
+        match: { domain: p.uu_domains || ["+.nrd.nie.163.com"] },
       };
       const project = Object.assign({}, S.snap.project, { rules: rules.concat([rule]) });
       S.snap = await api("save_project", { project, approved: true });

@@ -951,7 +951,21 @@ pub fn save_project(
     }
     let issues = validator::validate(&project);
     if has_errors(&issues) {
-        rt.log("warn", "ui", "规则校验未通过，未保存");
+        for i in issues
+            .iter()
+            .filter(|i| i.severity == uurelaybridge_core::validator::Severity::Error)
+        {
+            rt.log(
+                "warn",
+                "ui",
+                format!(
+                    "校验失败：{}（{}）{}",
+                    i.message,
+                    i.field,
+                    i.rule_id.clone().unwrap_or_default()
+                ),
+            );
+        }
         return Err(CommandError::with_issues(
             "validation",
             "规则有错误，未保存",
