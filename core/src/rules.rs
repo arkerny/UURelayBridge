@@ -5,8 +5,12 @@
 pub enum DomainKind {
     /// 精确域名：`a.example.com`
     Exact,
-    /// 后缀（含自身及所有子域）：`example.com` / `*.example.com`
+    /// 含自身及所有子域：`example.com`
     Suffix,
+    /// 仅子域：`*.example.com`
+    SubOnly,
+    /// 根域 + 子域：`+.example.com`
+    RootAndSub,
 }
 
 /// 规范化域名：去空白、转小写、去末尾点、去掉 `*.` 前缀。
@@ -16,9 +20,12 @@ pub fn normalize_domain(raw: &str) -> (String, bool) {
     if let Some(stripped) = s.strip_suffix('.') {
         s = stripped.to_string();
     }
-    let wildcard = s.starts_with("*.");
-    if wildcard {
-        s = s.trim_start_matches("*.").to_string();
+    // 内核 matcher 支持 *. 与 +. 两种前缀
+    let wildcard = s.starts_with("*.") || s.starts_with("+.");
+    if let Some(rest) = s.strip_prefix("*.") {
+        s = rest.to_string();
+    } else if let Some(rest) = s.strip_prefix("+.") {
+        s = rest.to_string();
     }
     (s, wildcard)
 }
@@ -46,8 +53,8 @@ pub fn validate_domain(raw: &str) -> Result<(String, DomainKind), String> {
     if host.is_empty() {
         return Err("域名不能为空".into());
     }
-    if host.contains('*') {
-        return Err("通配符只支持开头的 `*.` 写法".into());
+    if host.contains('*') || host.contains('+') {
+        return Err("通配符只支持开头的 `*.` / `+.` 写法".into());
     }
     if host.len() > 253 {
         return Err("域名长度超过 253 个字符".into());
@@ -75,7 +82,12 @@ pub fn validate_domain(raw: &str) -> Result<(String, DomainKind), String> {
 
     // 裸域名（无 *. 前缀）按后缀匹配，覆盖自身与所有子域；
     // 带 *. 前缀的写法语义相同，这里统一成后缀。
-    let kind = if wildcard || host.matches('.').count() >= 1 {
+    let lowered = raw.trim().to_ascii_lowercase();
+    let kind = if lowered.starts_with("+.") {
+        DomainKind::RootAndSub
+    } else if lowered.starts_with("*.") {
+        DomainKind::SubOnly
+    } else if host.matches('.').count() >= 1 {
         DomainKind::Suffix
     } else {
         DomainKind::Exact
@@ -131,6 +143,9 @@ pub fn compile_entry(
         let rule = match kind {
             DomainKind::Suffix => format!("DOMAIN-SUFFIX,{},{}", host, target),
             DomainKind::Exact => format!("DOMAIN,{},{}", host, target),
+            // 仅在子域写法在 Clash 中没有独立语义，退化为后缀匹配
+            DomainKind::SubOnly => format!("DOMAIN-SUFFIX,{},{}", host, target),
+            DomainKind::RootAndSub => format!("DOMAIN-SUFFIX,{},{}", host, target),
         };
         out.push(rule);
     }
@@ -160,10 +175,10 @@ mod tests {
     }
 
     #[test]
-    fn wildcard_becomes_suffix() {
+    fn star_wildcard_is_sub_only() {
         let (host, kind) = validate_domain("*.nrd.nie.163.com").unwrap();
         assert_eq!(host, "nrd.nie.163.com");
-        assert_eq!(kind, DomainKind::Suffix);
+        assert_eq!(kind, DomainKind::SubOnly);
     }
 
     #[test]
@@ -171,6 +186,21 @@ mod tests {
         assert!(validate_domain("https://a.com").is_err());
         assert!(validate_domain("a.com/path").is_err());
         assert!(validate_domain("a b.com").is_err());
+    }
+
+    #[test]
+    fn plus_wildcard_is_root_and_sub() {
+        let (host, kind) = validate_domain("+.nrd.nie.163.com").unwrap();
+        assert_eq!(host, "nrd.nie.163.com");
+        assert_eq!(kind, DomainKind::RootAndSub);
+    }
+
+    #[test]
+    fn plus_and_star_both_accepted() {
+        // 预置默认值用的就是 +. 写法，必须能通过校验
+        assert!(validate_domain("+.nrd.nie.163.com").is_ok());
+        assert!(validate_domain("*.nrd.nie.163.com").is_ok());
+        assert!(validate_domain("nrd.nie.163.com").is_ok());
     }
 
     #[test]

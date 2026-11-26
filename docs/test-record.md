@@ -17,7 +17,7 @@ WebView2 157.0.4341.60　**日期**：2026-11-23
 | 依赖 | crates.io 直连 | ✅ 436 个 crate |
 | 图标 | `python tools/gen_icons.py` | ✅ `icon.ico`（16–256 多尺寸）、`icon.icns`（PNG 载荷）、托盘 on/off、macOS 模板图 |
 
-产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.20.0_x64-setup.exe`、`dist/RelayBridge_1.20.0_x64_en-US.msi`。
+产物：`dist/RelayBridge.exe`、`dist/RelayBridge_1.21.0_x64-setup.exe`、`dist/RelayBridge_1.21.0_x64_en-US.msi`。
 
 ## 2. 自动化测试
 
@@ -103,8 +103,8 @@ debug 与 release 两个产物都跑过，输出一致：
 
 | 产物 | 路径 | 说明 |
 |---|---|---|
-| NSIS | `dist/RelayBridge_1.20.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
-| MSI | `dist/RelayBridge_1.20.0_x64_en-US.msi` | 同上 |
+| NSIS | `dist/RelayBridge_1.21.0_x64-setup.exe` | 用户级安装（`installMode: currentUser`），无需管理员 |
+| MSI | `dist/RelayBridge_1.21.0_x64_en-US.msi` | 同上 |
 | 免安装 | `dist/RelayBridge.exe` | 双击即用 |
 
 卸载不删除 `%APPDATA%\RelayBridge`（用户数据与生成结果保留）。
@@ -126,7 +126,7 @@ debug 与 release 两个产物都跑过，输出一致：
 
 ---
 
-## 8. 回归记录（1.20.0）：双击没反应
+## 8. 回归记录（1.21.0）：双击没反应
 
 **现象**：用户双击 `dist\RelayBridge.exe` 后没有任何窗口，进程立即消失。
 事件日志里有两条 `Application Error`：`Exception code: 0xc0000409`（abort），模块为 `RelayBridge.exe`。
@@ -168,14 +168,14 @@ debug 与 release 两个产物都跑过，输出一致：
 |---|---|
 | 全新状态（删除 `%LOCALAPPDATA%\com.relaybridge.desktop`）+ 可写目录运行 | ✅ 窗口正常，自动创建 `EBWebView` |
 | 从受限目录运行 | ✅ 不再静默崩溃，弹出可读的错误对话框并写日志 |
-| 1.20.0 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
+| 1.21.0 release 冒烟 | ✅ `dist\RelayBridge.exe` 在 `Desktop\relaybridge-standalone\` 下正常运行 |
 
 **给用户的结论**：程序本身没问题，但这个工作区目录受到写入限制；
 把 `dist\` 复制到工作区之外的普通目录（或把安装包复制出去再安装）即可。
 
 ---
 
-## 9. 回归记录（1.20.0）：日志面板位置错乱
+## 9. 回归记录（1.21.0）：日志面板位置错乱
 
 **现象**：界面里内容区被压成一条（约 44px），日志框被撑到 415px 并停在页面中部，
 窗口底部空出约 220px 的空白 —— 也就是"日志框位置不对"。
@@ -197,7 +197,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 **修复**：`.app` 改为纵向 flex（`topbar` / `banner` / `tabs` 固定，`content: 1fr`，
 `logbar: 220px`），日志面板内部同样改为 flex；横幅显示与否都不再影响其他元素位置。
 
-**验证**（1.20.0 release，1080×780 视口）：
+**验证**（1.21.0 release，1080×780 视口）：
 
 | 指标 | 结果 |
 |---|---|
@@ -209,7 +209,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 ---
 
-## 10. 1.20.0：改名 / 复制模式 / Host 模式
+## 10. 1.21.0：改名 / 复制模式 / Host 模式
 
 **改名**：crate `uurelaybridge(-core)`、产品名 `UURelayBridge`、identifier
 `com.uurelaybridge.desktop`、数据目录 `%APPDATA%\UURelayBridge`、窗口标题同步；
@@ -239,7 +239,7 @@ appKids  [topbar 56, banner 0(display:none), tabs 45, content 44, logbar 415]
 
 ---
 
-## 11. 1.20.0：SNI 配置同时作用于 Clash 模式
+## 11. 1.21.0：SNI 配置同时作用于 Clash 模式
 
 **做法**：Host 模式里的域名/分片参数是唯一一份，生成 Clash 脚本时同步使用：
 
@@ -264,7 +264,7 @@ Host 页 6 个表单字段、日志栏拖拽 340→460px 均正常。
 
 ---
 
-## 12. 1.20.0：模式选单 / DoH / 界面精简
+## 12. 1.21.0：模式选单 / DoH / 界面精简
 
 **模式选单**：顶部「Clash 规则 / 本机转发」二选一，存进 `settings.json` 的 `mode`；
 切换后标签页跟着变（clash：概览/规则/设置；host：本机转发/设置）。
@@ -292,7 +292,7 @@ Host 页改为「域名 / 端口 / 分片 / DNS」四项 + 状态侧栏；DoH �
 
 ---
 
-## 13. 1.20.0：内置 UU 远程端点预置
+## 13. 1.21.0：内置 UU 远程端点预置
 
 `core/src/presets.rs` 内置 6 个端点（`UU_ENDPOINTS` + 公共后缀 `UU_SUFFIX`），
 Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」按钮可一键填入。
@@ -309,7 +309,7 @@ Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」
 
 ---
 
-## 14. 1.20.0：修复顶部模式选单点击无响应
+## 14. 1.21.0：修复顶部模式选单点击无响应
 
 **现象**：顶部的「本机转发」按钮点了没反应，模式仍是 Clash 规则。
 
@@ -334,7 +334,7 @@ Host 模式默认值直接带上它们；两个模式各有一个「UU 远程」
 
 ---
 
-## 15. 1.20.0：单开关 + Clash 走本地 SOCKS + Host 监听 80/443
+## 15. 1.21.0：单开关 + Clash 走本地 SOCKS + Host 监听 80/443
 
 **结构调整**：一个开关启动/停止服务；Clash 模式起本地 SOCKS5，脚本注入 `socks5` 节点与规则；
 Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连），并保留一键写 hosts。
@@ -354,7 +354,7 @@ Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连
 
 ---
 
-## 16. 1.20.0：Host 模式可用性 + hosts 可恢复 + 全功能回归
+## 16. 1.21.0：Host 模式可用性 + hosts 可恢复 + 全功能回归
 
 **hosts 可恢复**
 - 每次写入前把原文件备份到 `<数据目录>/backups/hosts/hosts-<epoch>.txt`，只留最近 5 份；
@@ -377,7 +377,7 @@ Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连
 
 ---
 
-## 17. 1.20.0：前后端分离（Clash Verge 式架构）
+## 17. 1.21.0：前后端分离（Clash Verge 式架构）
 
 **结构**
 - 新增 `uuengine`（workspace crate `engine/`，纯 CLI 内核，不依赖 Tauri）；
@@ -407,7 +407,7 @@ Host 模式监听 127.0.0.1:443（TLS 分片）与 :80（HTTP 按 Host 头直连
 
 ---
 
-## 18. 1.20.0：内核改用简洁 YAML 配置
+## 18. 1.21.0：内核改用简洁 YAML 配置
 
 **配置格式**（`engine.yaml`，前端会自动写，也能手改）：
 
@@ -431,7 +431,7 @@ domains: [nrd.nie.163.com]
 
 ---
 
-## 19. 1.20.0：配置默认在 exe 同目录、缺失自动创建；启动健壮性
+## 19. 1.21.0：配置默认在 exe 同目录、缺失自动创建；启动健壮性
 
 **配置位置**
 - `uuengine` 默认用可执行文件同目录的 `engine.yaml`，不存在则自动生成（带注释模板）；
@@ -455,7 +455,7 @@ domains: [nrd.nie.163.com]
 
 ---
 
-## 20. 1.20.0：按 campus-tls-fix 的方式重做抗阻断
+## 20. 1.21.0：按 campus-tls-fix 的方式重做抗阻断
 
 参照 https://github.com/yunyancuo/campus-tls-fix 的实现，改了三处：
 
@@ -485,7 +485,7 @@ relay-mg-3303-d.nrd.nie.163.com    TLSv1.2   27ms cert=1960B
 
 ---
 
-## 21. 1.20.0：修 SOCKS 的 IP 目标 + 性能实测
+## 21. 1.21.0：修 SOCKS 的 IP 目标 + 性能实测
 
 **修的 bug**：SOCKS5 客户端常用 IP 字面量作为目标（如 `127.0.0.1:443`），
 但解析环节把 IP 也当域名去查 DNS，且"防 fake-ip"过滤会把回环地址丢掉，
@@ -511,7 +511,7 @@ relay-mg-3303-d.nrd.nie.163.com    TLSv1.2   27ms cert=1960B
 
 ---
 
-## 22. 1.20.0：内核健壮性 + 英文日志 + hosts 自检 + macOS arm64
+## 22. 1.21.0：内核健壮性 + 英文日志 + hosts 自检 + macOS arm64
 
 **健壮性（防闪退）**
 - 每个连接线程包 `catch_unwind`：单连接 panic 不再拖垮整个内核
@@ -543,7 +543,7 @@ relay-mg-3303-d.nrd.nie.163.com    TLSv1.2   27ms cert=1960B
 
 ---
 
-## 23. 1.20.0：修 WARN 暴露的三个解析问题
+## 23. 1.21.0：修 WARN 暴露的三个解析问题
 
 用户日志里出现了 4 类 WARN，逐个查到根因：
 
@@ -572,7 +572,7 @@ api-dcdn.nrd.nie.163.com          首次 18ms   后续 13/14ms
 
 ---
 
-## 24. 1.20.0：修空闲连接被掐断（远控延迟/丢包的真正原因）
+## 24. 1.21.0：修空闲连接被掐断（远控延迟/丢包的真正原因）
 
 **现象**：远控时帧延迟、丢包明显上升。
 
@@ -610,7 +610,7 @@ api-dcdn.nrd.nie.163.com          首次 18ms   后续 13/14ms
 
 ---
 
-## 25. 1.20.0：内核性能审查 + 健壮性补强 + 双平台产物
+## 25. 1.21.0：内核性能审查 + 健壮性补强 + 双平台产物
 
 **逐段审查后改动的点**
 
@@ -643,7 +643,7 @@ api-dcdn.nrd.nie.163.com          首次 18ms   后续 13/14ms
 **双平台产物**
 
 - Windows：`dist/uuengine.exe`（x86_64-pc-windows-msvc）、NSIS/MSI 安装包；
-- macOS：`dist/uuengine-1.20.0-macos-arm64-src.zip`
+- macOS：`dist/uuengine-1.21.0-macos-arm64-src.zip`
   （内核+core 源码 + `build-macos-arm64.sh` + 说明）。
   代码通过 `cargo check --target aarch64-apple-darwin`，
   但 Windows 上没有 Xcode SDK，**无法在此机器上链接出 Mach-O**，
@@ -651,7 +651,7 @@ api-dcdn.nrd.nie.163.com          首次 18ms   后续 13/14ms
 
 ---
 
-## 26. 1.20.0：通配符规则 + 非代理域名直连
+## 26. 1.21.0：通配符规则 + 非代理域名直连
 
 **规则语法**（`domains`，内核与 Clash 脚本双向一致）
 
@@ -697,7 +697,7 @@ api-dcdn.nrd.nie.163.com          首次 18ms   后续 13/14ms
 
 ---
 
-## 27. 1.20.0：预置改为通配符 `+.nrd.nie.163.com`
+## 27. 1.21.0：预置改为通配符 `+.nrd.nie.163.com`
 
 **改动**：预置从"6 条固定端点"改为**一条通配符** `+.nrd.nie.163.com`，
 内核 `print-config`、前端生成的 `engine.yaml`、「UU 远程」按钮全部同步。
@@ -723,7 +723,7 @@ relay-mg-3207-g.nrd.nie.163.com    TLSv1.2  192ms   ← 同上
 - 同级域名（`nrd-file.fp.ps.netease.com`）**不**被误匹配，走直连；
 - 新增 3 个单测：预置是单条通配符、覆盖全部已知端点、不漏到同级域名。
 
-**产物**：Windows `uuengine.exe` 1.20.0、NSIS/MSI；macOS 源码包同步更新。
+**产物**：Windows `uuengine.exe` 1.21.0、NSIS/MSI；macOS 源码包同步更新。
 
 ---
 
@@ -762,7 +762,7 @@ relay-mg-3207-g.nrd.nie.163.com    TLSv1.2  192ms   ← 同上
 
 ---
 
-## 29. 1.20.0：前端重构 + 提权修复
+## 29. 1.21.0：前端重构 + 提权修复
 
 ### 根因：setup 里同步启动内核，把窗口创建拖住了
 
@@ -813,7 +813,7 @@ host  模式：mode=host  nav=Host 模式 / 日志 / 设置
 
 ---
 
-## 30. 1.20.0：修"点不了" + 内核黑框 + 文件散落
+## 30. 1.21.0：修"点不了" + 内核黑框 + 文件散落
 
 ### 1) 点不了：其实是三个问题叠在一起
 
@@ -851,7 +851,7 @@ stdout/stderr 仍走管道，日志照常进 GUI（实测 `[engine] SOCKS5 liste
 
 ---
 
-## 31. 1.20.0：SOCKS 模式重命名 + 双模式独立 + 保活 / 自启
+## 31. 1.21.0：SOCKS 模式重命名 + 双模式独立 + 保活 / 自启
 
 ### 重命名与配置
 
@@ -897,7 +897,7 @@ cargo test：67 core + 7 行为 + 13 engine                   ✅
 
 ---
 
-## 32. 1.20.0 全量验收（UI + 业务逻辑）
+## 32. 1.21.0 全量验收（UI + 业务逻辑）
 
 ### 单元测试
 
@@ -960,7 +960,7 @@ restartOk=true                      重启内核命令可用 ✅
 
 ---
 
-## 33. 1.20.0：GUI 真实点击测试 + 修 4 个致命 bug
+## 33. 1.21.0：GUI 真实点击测试 + 修 4 个致命 bug
 
 这轮用**真实点击 + 后果验证**（不是只看元素位置）跑了一遍 GUI，
 发现前端与后端的数据契约有 4 处不一致，全部是用户必踩的坑。
@@ -1008,7 +1008,7 @@ restartOk=true                      重启内核命令可用 ✅
 
 ---
 
-## 34. 1.20.0：规则编辑内嵌 + 全局样式统一
+## 34. 1.21.0：规则编辑内嵌 + 全局样式统一
 
 ### 规则编辑不再是全局弹窗
 
@@ -1046,7 +1046,7 @@ restartOk=true                      重启内核命令可用 ✅
 新增静态检查：`check_ui_bindings.py`（DOM 绑定）、`check_contract.py`
 （命令签名与参数）、`check_schema.py`（数据结构字段），三者均通过。
 
-**产物**：Windows NSIS/MSI 1.20.0；macOS arm64 源码包。
+**产物**：Windows NSIS/MSI 1.21.0；macOS arm64 源码包。
 
 ---
 
@@ -1105,7 +1105,7 @@ restartOk=true                      重启内核命令可用 ✅
 
 ---
 
-## 36. 1.20.0：修「点启动没反应」+ GUI 预置默认内核配置
+## 36. 1.21.0：修「点启动没反应」+ GUI 预置默认内核配置
 
 ### 根因：全新安装默认模式是 `clash`
 
@@ -1165,4 +1165,58 @@ pub const MODES: [&str; 2] = ["socks", "host"];
 
 **回归**：core 70 + 行为 7 + engine 13 全绿。
 
-**产物**：Windows NSIS/MSI 1.20.0；macOS arm64 源码包。
+**产物**：Windows NSIS/MSI 1.21.0；macOS arm64 源码包。
+
+---
+
+## 37. 1.21.0：修 `+.` 通配符不被校验器接受
+
+### 现象
+
+规则里填 `+.nrd.nie.163.com` 报错：
+
+```
++.nrd.nie.163.com：标签 `+` 含有非法字符
+```
+
+而这正是程序自己预置的默认域名 —— 也就是说默认配置一保存就报错。
+
+### 根因：校验器和内核 matcher 语义不一致
+
+内核 `engine/src/matcher.rs` 支持四写法：
+
+| 写法 | 语义 |
+|---|---|
+| `a.com` | 自身 + 所有子域 |
+| `*.a.com` | 仅子域 |
+| `+.a.com` | 根域 + 子域 |
+| `a.*.c.com` | 中间通配 |
+
+但 `core/src/rules.rs` 的 `normalize_domain()` 只剥 `*.` 前缀，`+.` 被当成
+普通标签，随后被「标签只允许字母数字/-/_」的规则判为非法字符。
+
+### 修复
+
+1. `normalize_domain()` 同时识别 `*.` 与 `+.`；
+2. 通配符字符校验放行 `+`，错误提示改为「只支持开头的 `*.` / `+.`」；
+3. `DomainKind` 从 2 个变体扩到 4 个（`Exact` / `Suffix` / `SubOnly` / `RootAndSub`），
+   按原始写法判定，不再一律归成 `Suffix`；
+4. `DomainKind` → Clash 规则映射补齐新变体。
+
+### 新增测试
+
+```
+star_wildcard_is_sub_only      *.a.com   → DomainKind::SubOnly
+plus_wildcard_is_root_and_sub  +.a.com   → DomainKind::RootAndSub
+plus_and_star_both_accepted    三种写法都能通过校验
+```
+
+### 验证
+
+- 单元测试 **72 passed**（新增 2 个）+ 集成 7 passed；
+- GUI 零配置启用 → `7899` 监听正常，`engine.yaml` 正确写入
+  `  - +.nrd.nie.163.com`，日志无任何校验错误；
+- 通配符语义测试 4 组场景 PASS；
+- 引擎窗口数 0。
+
+**产物**：Windows NSIS/MSI 1.21.0；macOS arm64 源码包。

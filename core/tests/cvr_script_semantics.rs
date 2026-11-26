@@ -222,7 +222,12 @@ fn off_removes_previously_injected_rules() {
 
 #[test]
 fn empty_rules_project_still_produces_working_script() {
-    let script = render(&Project::default(), true);
+    // 默认项目预置了 UU 规则，这里显式构造空项目
+    let empty = Project {
+        rules: Vec::new(),
+        ..Default::default()
+    };
+    let script = render(&empty, true);
     let Some(out) = run_node(&script, &user_config(), 1) else {
         return;
     };
