@@ -72,6 +72,12 @@
       await fn();
     } catch (e) {
       const msg = typeof e === "string" ? e : (e && e.message) || JSON.stringify(e);
+      // 后端校验失败会带回 issues，展示到检查面板，避免用户只看到一句"未保存"
+      if (e && Array.isArray(e.issues) && e.issues.length) {
+        renderIssues(e.issues);
+      } else {
+        renderIssues([{ severity: "error", message: msg }]);
+      }
       toast(msg, "err", 5000);
       console.error(e);
     } finally {
@@ -202,12 +208,17 @@
   function renderIssues(list) {
     const pane = $("issuePane");
     const box = $("issueBox");
+    if (!pane || !box) return;
+    // 面板始终显示：没有问题也要明确告诉用户"检查过了"
+    pane.hidden = false;
     const bad = (list || []).filter((i) => i.severity !== "info");
+
     if (!bad.length) {
-      pane.hidden = true;
+      box.innerHTML =
+        '<div class="issue ok"><span>✓</span><span>检查完毕，无错误</span></div>';
       return;
     }
-    pane.hidden = false;
+
     box.innerHTML = bad
       .map((i) => (
         '<div class="issue ' + (i.severity === "error" ? "err" : "warn") + '">' +

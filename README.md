@@ -35,7 +35,7 @@
 
 ## 二、架构：前端 + 独立内核
 
-从 1.21.0 起按 Clash Verge 的方式拆开：
+从 1.22.0 起按 Clash Verge 的方式拆开：
 
 ```
 UURelayBridge.exe（前端：界面、配置、hosts 管理、托盘）

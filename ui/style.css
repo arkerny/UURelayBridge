@@ -385,3 +385,6 @@ body.modal-open #btnRestart {
   pointer-events: none;
   opacity: .55;
 }
+/* 检查结果：无错误时的绿色状态行 */
+.issue.ok { color: var(--ok); }
+.issue.ok span:first-child { font-weight: 700; }

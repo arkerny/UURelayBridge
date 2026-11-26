@@ -25,6 +25,26 @@ pub struct CommandError {
     pub issues: Vec<Issue>,
 }
 
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)?;
+        // 附带校验明细：前端即使只拿到字符串，也能看出哪条规则错了
+        if !self.issues.is_empty() {
+            let detail: Vec<String> = self
+                .issues
+                .iter()
+                .filter(|i| matches!(i.severity, uurelaybridge_core::validator::Severity::Error))
+                .map(|i| i.message.clone())
+                .collect();
+            if !detail.is_empty() {
+                write!(f, "：{}", detail.join("；"))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+
 impl CommandError {
     fn new(kind: &str, message: impl Into<String>) -> Self {
         Self {
