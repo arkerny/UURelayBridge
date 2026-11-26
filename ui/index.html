@@ -13,36 +13,23 @@
   <aside class="sidebar">
     <div class="brand">
       <span class="logo" aria-hidden="true"></span>
-      <div class="brand-text">
-        <strong>UURelayBridge</strong>
-        <span class="muted small" id="appMeta">加载中…</span>
-      </div>
+      <strong>UURelayBridge</strong>
     </div>
 
-    <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="使用方式">
-      <button class="mode-btn" data-mode="clash">SOCKS 模式</button>
-      <button class="mode-btn" data-mode="host">Host 模式</button>
+    <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="使用模式">
+      <button class="mode-btn" data-mode="socks">SOCKS</button>
+      <button class="mode-btn" data-mode="host">Host</button>
     </div>
 
     <nav class="nav">
-      <button class="nav-item" data-tab="overview" data-for="both">
-        <span class="nav-icon" aria-hidden="true">◍</span><span>概览</span>
-      </button>
-      <button class="nav-item" data-tab="config" data-for="both">
-        <span class="nav-icon" aria-hidden="true">⚙</span><span>配置</span>
-      </button>
-      <button class="nav-item" data-tab="rules" data-for="both">
-        <span class="nav-icon" aria-hidden="true">☰</span><span>规则</span>
-      </button>
-      <button class="nav-item" data-tab="logs" data-for="both">
-        <span class="nav-icon" aria-hidden="true">≡</span><span>日志</span>
-      </button>
-      <button class="nav-item" data-tab="settings" data-for="both">
-        <span class="nav-icon" aria-hidden="true">⚒</span><span>设置</span>
-      </button>
+      <button class="nav-item" data-tab="overview"><span class="nav-icon">◍</span><span>概览</span></button>
+      <button class="nav-item" data-tab="config"><span class="nav-icon">⚙</span><span>配置</span></button>
+      <button class="nav-item" data-tab="rules"><span class="nav-icon">☰</span><span>规则</span></button>
+      <button class="nav-item" data-tab="logs"><span class="nav-icon">≡</span><span>日志</span></button>
+      <button class="nav-item" data-tab="settings"><span class="nav-icon">⚒</span><span>设置</span></button>
     </nav>
 
-    <div class="side-status" id="sideStatus">
+    <div class="side-status">
       <div class="status-line">
         <span class="dot" id="sideDot"></span>
         <span id="sideText">未运行</span>
@@ -56,14 +43,15 @@
     <header class="main-head">
       <h1 id="pageTitle">概览</h1>
       <div class="head-actions">
-        <button class="btn tiny ghost" id="btnRestart" title="重启内核">重启内核</button>
-        <label class="switch" id="enabledSwitch" title="启动 / 停止本地服务">
+        <button class="btn tiny ghost" id="btnRestart">重启内核</button>
+        <label class="switch" id="enabledSwitch" title="启动 / 停止内核">
           <input type="checkbox" id="toggleEnabled" />
           <span class="slider"></span>
         </label>
       </div>
     </header>
 
+    <!-- 概览 -->
     <section class="page active" id="page-overview">
       <div class="cards">
         <div class="card">
@@ -90,186 +78,222 @@
             <button class="btn tiny ghost" id="btnQuickStart">一键配置</button>
           </div>
         </div>
-        <div class="steps" id="quickSteps"></div>
+        <div class="pane-body">
+          <div class="steps" id="quickSteps"></div>
+        </div>
       </div>
 
       <div class="pane" id="issuePane" hidden>
         <div class="pane-head"><h2>检查结果</h2></div>
-        <div class="issues" id="issueBox"></div>
+        <div class="pane-body"><div class="issues" id="issueBox"></div></div>
       </div>
     </section>
 
-    <section class="page" id="page-rules">
-      <div class="pane-head">
-        <h2>域名规则</h2>
-        <div class="pane-actions">
-          <button class="btn tiny ghost" id="btnPresetUU">填入 UU</button>
-          <button class="btn tiny ghost" id="btnJson">编辑 JSON</button>
-          <button class="btn" id="btnAddRule">新建</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table class="rules">
-          <thead>
-            <tr>
-              <th style="width:56px">启用</th>
-              <th>名称</th>
-              <th>匹配</th>
-              <th style="width:170px">动作</th>
-              <th style="width:90px"></th>
-            </tr>
-          </thead>
-          <tbody id="rulesBody"></tbody>
-        </table>
-        <div class="empty" id="rulesEmpty">还没有规则。点「新建」，或用「填入 UU」。</div>
-      </div>
-      <div class="hintline">
-        支持通配符：<code>a.com</code> 含子域 · <code>*.a.com</code> 仅子域 ·
-        <code>+.a.com</code> 根域加子域 · <code>*</code> 全部域名。未命中的域名直接直连。
-      </div>
-    </section>
-
+    <!-- 配置：两种模式各自的区块 -->
     <section class="page" id="page-config">
-      <div class="pane-head">
-        <h2>Host 模式</h2>
-        <div class="pane-actions">
-          <button class="btn ghost" id="btnHostSave">保存</button>
-          <button class="btn ghost" id="btnHostApplyHosts">写入 Hosts</button>
-          <button class="btn ghost" id="btnHostRestore">恢复原 hosts</button>
-          <button class="btn ghost danger" id="btnHostClearHosts">移除 Hosts</button>
-        </div>
-      </div>
-
       <div class="pane" id="socksPane">
         <div class="pane-head">
           <h2>Clash 扩展配置</h2>
           <div class="pane-actions">
-            <button class="btn" id="btnCopyScript">复制</button>
+            <button class="btn tiny ghost" id="btnCopyScript">复制</button>
             <button class="btn tiny ghost" id="btnExportScript">导出到文件</button>
           </div>
         </div>
-        <pre class="code" id="scriptBox">加载中…</pre>
-        <p class="note">粘贴到 Clash Verge → 订阅 → 右键配置 → 编辑扩展脚本。</p>
+        <div class="pane-body no-pad">
+          <pre class="code" id="scriptBox">加载中…</pre>
+        </div>
+        <div class="pane-foot">
+          粘贴到 Clash Verge → 订阅 → 右键配置 → 编辑扩展脚本。
+        </div>
       </div>
 
       <div class="pane" id="hostPane">
-        <div class="pane-head"><h2>本机监听</h2></div>
-      <div class="form">
-        <label class="field">
-          <span>域名</span>
-          <textarea id="hostDomains" rows="5" spellcheck="false"
-            placeholder="+.nrd.nie.163.com&#10;*.example.com&#10;*"></textarea>
-        </label>
-
-        <div class="grid3">
-          <label class="row"><span>端口</span>
-            <input id="hostPort" type="number" min="1" max="65535" /></label>
-          <label class="row"><span>分片</span>
-            <select id="hostMode">
-              <option value="record">TLS Record</option>
-              <option value="segment">TCP 分段</option>
-              <option value="off">不分片</option>
-            </select></label>
-          <label class="row"><span>段数</span>
-            <input id="hostParts" type="number" min="2" max="12" /></label>
+        <div class="pane-head">
+          <h2>本机监听</h2>
+          <div class="pane-actions">
+            <button class="btn tiny ghost" id="btnHostSave">保存</button>
+            <button class="btn tiny ghost" id="btnHostApplyHosts">写入 Hosts</button>
+            <button class="btn tiny ghost" id="btnHostRestore">恢复原 hosts</button>
+            <button class="btn tiny ghost danger" id="btnHostClearHosts">移除 Hosts</button>
+          </div>
         </div>
+        <div class="pane-body">
+          <div class="form">
+            <label class="field">
+              <span>域名</span>
+              <textarea id="hostDomains" rows="5" spellcheck="false"
+                placeholder="+.nrd.nie.163.com&#10;*.example.com&#10;*"></textarea>
+            </label>
 
-        <div class="grid2">
-          <label class="row"><span>SOCKS 端口</span>
-            <input id="hostSocksPort" type="number" min="1" max="65535" /></label>
-          <label class="row"><span>DNS</span>
-            <input id="hostDns" type="text" spellcheck="false" list="dnsPresets"
-              placeholder="223.5.5.5 或 https://dns.alidns.com/dns-query" /></label>
+            <div class="grid3">
+              <label class="field"><span>端口</span>
+                <input id="hostPort" type="number" min="1" max="65535" /></label>
+              <label class="field"><span>分片方式</span>
+                <select id="hostMode">
+                  <option value="record">TLS Record</option>
+                  <option value="segment">TCP 分段</option>
+                  <option value="off">不分片</option>
+                </select></label>
+              <label class="field"><span>段数</span>
+                <input id="hostParts" type="number" min="2" max="12" /></label>
+            </div>
+
+            <div class="grid2">
+              <label class="field"><span>SOCKS 端口</span>
+                <input id="hostSocksPort" type="number" min="1" max="65535" /></label>
+              <label class="field"><span>DNS</span>
+                <input id="hostDns" type="text" spellcheck="false" list="dnsPresets"
+                  placeholder="223.5.5.5 或 https://dns.alidns.com/dns-query" /></label>
+            </div>
+            <datalist id="dnsPresets">
+              <option value="https://dns.alidns.com/dns-query">AliDNS · DoH</option>
+              <option value="https://doh.pub/dns-query">DNSPod · DoH</option>
+              <option value="https://cloudflare-dns.com/dns-query">Cloudflare · DoH</option>
+              <option value="223.5.5.5">AliDNS · UDP</option>
+            </datalist>
+
+            <label class="row">
+              <input type="checkbox" id="hostLinkClash" />
+              <span>同一份域名也写进 Clash 脚本</span>
+            </label>
+          </div>
         </div>
-        <datalist id="dnsPresets">
-          <option value="https://dns.alidns.com/dns-query">AliDNS · DoH</option>
-          <option value="https://doh.pub/dns-query">DNSPod · DoH</option>
-          <option value="https://cloudflare-dns.com/dns-query">Cloudflare · DoH</option>
-          <option value="223.5.5.5">AliDNS · UDP</option>
-        </datalist>
-
-        <label class="row">
-          <input type="checkbox" id="hostLinkClash" />
-          <span>同一份域名也写进 Clash 脚本</span>
-        </label>
+        <div class="pane-foot">
+          Host 模式监听 80/443，首次开启会让系统弹出管理员确认；不用时请「移除 Hosts」。
+        </div>
       </div>
-
-      <div class="kv">
-        <div><span class="muted">监听</span><code id="hostListen">—</code></div>
-        <div><span class="muted">Hosts</span><code id="hostHostsState">—</code></div>
-        <div><span class="muted">连接 / 分片</span><code id="hostStats">—</code></div>
-      </div>
-      </div>
-
-      <p class="note">
-        Host 模式要监听 80/443，首次开启会让系统弹出管理员确认；
-        不用时请「移除 Hosts」，否则这些域名会指向本机。
-      </p>
     </section>
 
+    <!-- 规则：列表与编辑面板都在本页内 -->
+    <section class="page" id="page-rules">
+      <div class="pane">
+        <div class="pane-head">
+          <h2>域名规则</h2>
+          <div class="pane-actions">
+            <button class="btn tiny ghost" id="btnPresetUU">填入 UU</button>
+            <button class="btn tiny ghost" id="btnJson">编辑 JSON</button>
+            <button class="btn tiny" id="btnAddRule">新建规则</button>
+          </div>
+        </div>
+        <div class="pane-body no-pad">
+          <div class="table-wrap">
+            <table class="rules">
+              <thead>
+                <tr>
+                  <th style="width:56px">启用</th>
+                  <th>名称</th>
+                  <th>匹配</th>
+                  <th style="width:150px">动作</th>
+                  <th style="width:96px"></th>
+                </tr>
+              </thead>
+              <tbody id="rulesBody"></tbody>
+            </table>
+            <div class="empty" id="rulesEmpty">还没有规则。点「新建规则」，或「填入 UU」。</div>
+          </div>
+        </div>
+        <div class="pane-foot">
+          支持通配符 <code>a.com</code> / <code>*.a.com</code> / <code>+.a.com</code> / <code>*</code>；
+          未命中的域名直接直连。
+        </div>
+      </div>
+
+      <!-- 规则编辑面板：嵌在规则页内，不覆盖全局 -->
+      <div class="pane editor" id="ruleEditor" hidden>
+        <div class="pane-head">
+          <h2 id="ruleTitle">新建规则</h2>
+          <div class="pane-actions">
+            <button class="btn tiny ghost" id="ruleCancel">取消</button>
+            <button class="btn tiny" id="ruleOk">保存规则</button>
+          </div>
+        </div>
+        <div class="pane-body">
+          <div class="form">
+            <label class="field">
+              <span>名称</span>
+              <input id="fName" placeholder="例如 UU 远程" />
+            </label>
+            <label class="field">
+              <span>匹配域名（每行一个）</span>
+              <textarea id="fDomains" rows="4" spellcheck="false"
+                placeholder="+.nrd.nie.163.com"></textarea>
+            </label>
+            <div class="grid2">
+              <label class="field"><span>动作</span>
+                <select id="fAction">
+                  <option value="proxy">代理</option>
+                  <option value="direct">直连</option>
+                  <option value="reject">拦截</option>
+                </select></label>
+              <label class="field" id="fGroupField"><span>策略组</span>
+                <input id="fGroup" placeholder="必须与你的 Clash 配置一致" /></label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 日志 -->
     <section class="page" id="page-logs">
-      <div class="pane-head">
-        <h2>日志</h2>
-        <div class="pane-actions">
-          <button class="btn tiny ghost" id="btnClearLogs">清空</button>
-          <button class="btn tiny ghost" id="btnOpenLogFile">日志文件</button>
+      <div class="pane fill">
+        <div class="pane-head">
+          <h2>日志</h2>
+          <div class="pane-actions">
+            <button class="btn tiny ghost" id="btnClearLogs">清空</button>
+            <button class="btn tiny ghost" id="btnOpenLogFile">打开数据目录</button>
+          </div>
+        </div>
+        <div class="pane-body no-pad fill">
+          <pre class="log" id="logBox"></pre>
         </div>
       </div>
-      <pre class="log" id="logBox"></pre>
     </section>
 
+    <!-- 设置 -->
     <section class="page" id="page-settings">
-      <div class="pane-head">
-        <h2>设置</h2>
-        <div class="pane-actions">
-          <button class="btn" id="btnSaveSettings">保存</button>
+      <div class="pane">
+        <div class="pane-head">
+          <h2>常规</h2>
+        </div>
+        <div class="pane-body">
+          <div class="form">
+            <label class="row"><input type="checkbox" id="setStartMin" /><span>启动时隐藏到托盘</span></label>
+            <label class="row"><input type="checkbox" id="setCloseToTray" /><span>关闭窗口时隐藏到托盘</span></label>
+            <label class="row"><input type="checkbox" id="setNotify" /><span>操作完成显示提示</span></label>
+            <label class="row"><input type="checkbox" id="setAutostart" /><span>开机自动启动</span></label>
+            <label class="row"><input type="checkbox" id="setKeepalive" /><span>内核自动保活（卡死自动重启）</span></label>
+            <label class="field"><span>主题</span>
+              <select id="setTheme">
+                <option value="system">跟随系统</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select></label>
+          </div>
+        </div>
+        <div class="pane-foot">
+          <div class="row spread">
+            <span>数据目录　<code class="mono small" id="setData">—</code></span>
+            <button class="btn tiny ghost" id="btnOpenData">打开</button>
+          </div>
         </div>
       </div>
-      <div class="form">
-        <label class="row"><input type="checkbox" id="setStartMin" /><span>启动时隐藏到托盘</span></label>
-        <label class="row"><input type="checkbox" id="setCloseToTray" /><span>关闭窗口时隐藏到托盘</span></label>
-        <label class="row"><input type="checkbox" id="setNotify" /><span>操作完成显示提示</span></label>
-        <label class="row"><input type="checkbox" id="setAutostart" /><span>开机自动启动</span></label>
-        <label class="row"><input type="checkbox" id="setKeepalive" /><span>内核自动保活（卡死自动重启）</span></label>
-        <label class="row"><span>主题</span>
-          <select id="setTheme">
-            <option value="system">跟随系统</option>
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-          </select></label>
-        <div class="row"><span>数据目录</span>
-          <code class="mono small" id="setData">—</code>
-          <button class="btn tiny ghost" id="btnOpenData">打开</button></div>
-        <div class="row"><span>内核日志</span>
-          <code class="mono small" id="setEngineLog">—</code></div>
+
+      <div class="pane">
+        <div class="pane-head"><h2>保存</h2></div>
+        <div class="pane-body">
+          <div class="row spread">
+            <span class="muted small">
+              本程序只生成自己的文件，不修改 Clash Verge 的订阅或配置。
+            </span>
+            <button class="btn" id="btnSaveSettings">保存设置</button>
+          </div>
+        </div>
       </div>
-      <p class="note">
-        本程序只生成自己的文件，不修改 Clash Verge 的订阅或配置。
-      </p>
     </section>
   </main>
 </div>
 
-<div class="modal" id="ruleModal" hidden>
-  <div class="modal-box">
-    <h3 id="ruleTitle">新建规则</h3>
-    <label class="field"><span>名称</span><input id="fName" /></label>
-    <label class="field"><span>匹配域名（每行一个）</span>
-      <textarea id="fDomains" rows="4" spellcheck="false"></textarea></label>
-    <label class="row"><span>动作</span>
-      <select id="fAction">
-        <option value="proxy">代理</option>
-        <option value="direct">直连</option>
-        <option value="block">拦截</option>
-      </select></label>
-    <label class="row" id="fGroupRow"><span>策略组</span><input id="fGroup" /></label>
-    <div class="modal-actions">
-      <button class="btn ghost" id="ruleCancel">取消</button>
-      <button class="btn" id="ruleOk">确定</button>
-    </div>
-  </div>
-</div>
-
+<!-- JSON 编辑：内容多，仍用弹窗 -->
 <div class="modal" id="jsonModal" hidden>
   <div class="modal-box wide">
     <h3>编辑 JSON</h3>
@@ -281,6 +305,7 @@
   </div>
 </div>
 
+<!-- 确认框：必须打断全局 -->
 <div class="modal" id="confirmModal" hidden>
   <div class="modal-box">
     <h3 id="confirmTitle">确认</h3>

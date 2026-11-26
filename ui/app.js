@@ -1,15 +1,16 @@
-/* UURelayBridge 前端逻辑（重写版）
+/* UURelayBridge 前端逻辑
  *
  * 约定：
- *  - 所有落盘操作先经过 confirmDialog（用户显式授权）
- *  - 顶部开关 = 启停内核；模式切换 = 内核以 socks / host 运行
- *  - 日志独立成页，不再挤压主区高度
+ *  - 落盘/提权操作前必须经 confirmDialog（用户显式授权）
+ *  - 顶部开关 = 启动 / 停止内核进程
+ *  - 规则编辑是规则页内的面板（#ruleEditor），不是全局弹窗
+ *  - 两种模式各自独立记录开关状态
  */
 (function () {
   "use strict";
 
   const S = { snap: null, busy: false, tab: "overview" };
-  const HOST = { view: null, dirty: false, timer: null };
+  const HOST = { view: null, dirty: false };
   const RULE = { editing: null };
   let PRESETS = null;
 
@@ -17,7 +18,7 @@
   const hasBackend = () => !!window.__TAURI__;
 
   async function api(cmd, args) {
-    if (!hasBackend()) throw new Error("没有后端（浏览器预览模式）");
+    if (!hasBackend()) throw new Error("没有后端（预览模式）");
     return window.__TAURI__.core.invoke(cmd, args || {});
   }
 
@@ -25,6 +26,7 @@
   let toastTimer = null;
   function toast(msg, kind, ms) {
     const el = $("toast");
+    if (!el) return;
     el.textContent = msg;
     el.className = "toast" + (kind ? " " + kind : "");
     el.hidden = false;
@@ -50,17 +52,13 @@
     });
   }
 
-  // 操作互斥：正在执行时给出可见反馈，而不是静默丢弃（用户会以为点了没反应）
   function setBusy(on) {
     S.busy = on;
     document.body.classList.toggle("busy", on);
     const tg = $("toggleEnabled");
     if (tg) {
       tg.disabled = on;
-      if (!on && S.snap) {
-        const s = S.snap.settings;
-        tg.checked = currentMode() === "host" ? !!s.enabled_host : !!s.enabled_socks;
-      }
+      if (!on && S.snap) tg.checked = modeOn(S.snap.settings);
     }
   }
 
@@ -87,37 +85,13 @@
     ));
   }
 
-  /* ---------------- 模式 / 标签 ---------------- */
+  /* ---------------- 模式 ---------------- */
   function currentMode() {
     return S.snap && S.snap.settings.mode === "host" ? "host" : "socks";
   }
 
-  function applyMode() {
-    const mode = currentMode();
-    document.body.dataset.mode = mode;
-    document.querySelectorAll(".mode-btn").forEach((b) => {
-      b.classList.toggle("active", b.dataset.mode === mode);
-    });
-    document.querySelectorAll(".nav-item").forEach((n) => {
-      const forMode = n.dataset.for || "both";
-      n.hidden = forMode !== "both" && forMode !== mode;
-    });
-    // 配置页内部：两种模式各自的区块
-    $("socksPane").hidden = mode !== "socks";
-    $("hostPane").hidden = mode !== "host";
-    $("modeBadge").textContent = mode === "host" ? "HOST" : "SOCKS";
-    $("modeBadge").className = "mode-badge " + mode;
-    renderScriptBox();
-    if (mode === "host" && hasBackend()) {
-      setTimeout(() => guard(loadHost), 0);
-    }
-  }
-
-  function renderScriptBox() {
-    const box = $("scriptBox");
-    if (!box) return;
-    const text = (S.snap && S.snap.preview) || "";
-    box.textContent = text || "（暂无内容）";
+  function modeOn(settings) {
+    return settings.mode === "host" ? !!settings.enabled_host : !!settings.enabled_socks;
   }
 
   const TITLES = {
@@ -129,25 +103,36 @@
   };
 
   function switchTab(name) {
-    const target = document.getElementById("page-" + name);
-    if (!target) return;          // 不存在的页直接忽略，避免空白界面
-    // 目标页不属于当前模式时，回落到该模式的首页。
-    // 注意：不能用 navItem.hidden 判断 —— 点击瞬间它可能还是上一次的旧值。
-    const navItem = document.querySelector('.nav-item[data-tab="' + name + '"]');
-    const forMode = navItem ? (navItem.dataset.for || "both") : "both";
-    if (forMode !== "both" && forMode !== currentMode()) {
-      name = currentMode() === "host" ? "host" : "overview";
-      if (!document.getElementById("page-" + name)) return;
-    }
+    if (!$("page-" + name)) return;
     S.tab = name;
     document.querySelectorAll(".nav-item").forEach((n) => {
       n.classList.toggle("active", n.dataset.tab === name);
     });
-    const shown = "page-" + name;
     document.querySelectorAll(".page").forEach((p) => {
-      p.classList.toggle("active", p.id === shown);
+      p.classList.toggle("active", p.id === "page-" + name);
     });
     $("pageTitle").textContent = TITLES[name] || "";
+  }
+
+  function applyMode() {
+    const mode = currentMode();
+    document.body.dataset.mode = mode;
+    document.querySelectorAll(".mode-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.mode === mode);
+    });
+    $("socksPane").hidden = mode !== "socks";
+    $("hostPane").hidden = mode !== "host";
+    $("modeBadge").textContent = mode === "host" ? "HOST" : "SOCKS";
+    renderScript();
+    if (mode === "host" && hasBackend()) {
+      setTimeout(() => guard(loadHost), 0);
+    }
+  }
+
+  function renderScript() {
+    const box = $("scriptBox");
+    if (!box) return;
+    box.textContent = (S.snap && S.snap.preview) || "（暂无内容）";
   }
 
   /* ---------------- 渲染 ---------------- */
@@ -155,23 +140,17 @@
     if (!S.snap) return;
     const s = S.snap.settings;
     const svc = S.snap.service || {};
-
-    // 开关状态取“当前模式”的字段，而不是全局旧字段
-    const modeOn = currentMode() === "host" ? !!s.enabled_host : !!s.enabled_socks;
-    $("toggleEnabled").checked = modeOn;
-    $("appMeta").textContent = "v" + S.snap.app_version;
-
-    // 侧栏状态
-    const dot = $("sideDot");
     const running = !!svc.running;
-    dot.className = "dot" + (running ? " on" : svc.last_error ? " err" : "");
     const modeName = currentMode() === "host" ? "Host 模式" : "SOCKS 模式";
+
+    $("toggleEnabled").checked = modeOn(s);
+
+    $("sideDot").className = "dot" + (running ? " on" : svc.last_error ? " err" : "");
     $("sideText").textContent = running ? modeName + " · 运行中" : modeName + " · 未启动";
     $("sideHint").textContent = running
       ? (svc.socks || svc.https || "")
       : (svc.last_error || "服务未启动");
 
-    // 概览卡片
     $("ovService").textContent = running
       ? (svc.socks ? "SOCKS " + svc.socks : (svc.https || "已监听"))
       : "未启动";
@@ -184,10 +163,9 @@
       ? (svc.hosts_domains || []).length + " 个域名指向本机"
       : "Host 模式下才需要";
 
-    renderQuickSteps(svc, s);
+    renderSteps(svc);
     renderIssues(S.snap.validation || []);
 
-    // 设置页
     $("setStartMin").checked = !!s.start_minimized;
     $("setCloseToTray").checked = !!s.close_to_tray;
     $("setNotify").checked = !!s.show_notifications;
@@ -195,13 +173,11 @@
     $("setKeepalive").checked = !!s.keepalive;
     $("setTheme").value = s.theme;
     $("setData").textContent = (S.snap.paths || {}).data_dir || "—";
-    $("setEngineLog").textContent = (S.snap.paths || {}).data_dir
-      ? (S.snap.paths.data_dir + "\\uuengine.log") : "—";
 
     applyMode();
   }
 
-  function renderQuickSteps(svc, s) {
+  function renderSteps(svc) {
     const mode = currentMode();
     const steps = mode === "host"
       ? [
@@ -226,7 +202,7 @@
   function renderIssues(list) {
     const pane = $("issuePane");
     const box = $("issueBox");
-    const bad = (list || []).filter((i) => i.level !== "info");
+    const bad = (list || []).filter((i) => i.severity !== "info");
     if (!bad.length) {
       pane.hidden = true;
       return;
@@ -234,8 +210,8 @@
     pane.hidden = false;
     box.innerHTML = bad
       .map((i) => (
-        '<div class="issue ' + (i.level === "error" ? "err" : "warn") + '">' +
-        "<span>" + (i.level === "error" ? "✕" : "!") + "</span>" +
+        '<div class="issue ' + (i.severity === "error" ? "err" : "warn") + '">' +
+        "<span>" + (i.severity === "error" ? "✕" : "!") + "</span>" +
         "<span>" + esc(i.message) + "</span></div>"
       ))
       .join("");
@@ -248,20 +224,18 @@
     if (!box) return;
     const line = document.createElement("div");
     line.className = "log-line " + (entry.level || "info");
-    line.textContent = entry.text || (
+    line.textContent =
       (entry.ts ? entry.ts + " " : "") +
       "[" + (entry.level || "info") + "] [" + (entry.source || "app") + "] " +
-      (entry.message || "")
-    );
+      (entry.message || "");
     box.appendChild(line);
     while (box.childElementCount > LOG_MAX) box.removeChild(box.firstChild);
     box.scrollTop = box.scrollHeight;
   }
 
-  /* ---------------- Host 页 ---------------- */
+  /* ---------------- Host 配置 ---------------- */
   async function loadHost() {
-    const v = await api("host_get");
-    HOST.view = v;
+    HOST.view = await api("host_get");
     renderHost();
   }
 
@@ -269,7 +243,6 @@
     const v = HOST.view;
     if (!v) return;
     const c = v.config || {};
-    const st = v.status || {};
     if (!HOST.dirty) {
       $("hostDomains").value = (c.domains || []).join("\n");
       $("hostPort").value = c.listen_port;
@@ -279,13 +252,6 @@
       $("hostDns").value = c.dns_server;
       $("hostLinkClash").checked = !!c.link_clash;
     }
-    $("hostListen").textContent = st.running
-      ? (st.https || st.socks || "—")
-      : "未启动";
-    $("hostHostsState").textContent = st.hosts_applied
-      ? "已写入 " + (st.hosts_domains || []).length + " 条"
-      : "未写入";
-    $("hostStats").textContent = (st.conns || 0) + " / " + (st.fragmented || 0);
   }
 
   function hostFormConfig() {
@@ -303,8 +269,7 @@
   }
 
   async function saveHost() {
-    const ok = await confirmDialog("保存 Host 配置", "写入 <code>hostmode.json</code>。");
-    if (!ok) return;
+    if (!(await confirmDialog("保存配置", "写入 <code>hostmode.json</code>。"))) return;
     await guard(async () => {
       HOST.view = await api("host_set_config", { config: hostFormConfig(), approved: true });
       HOST.dirty = false;
@@ -316,12 +281,7 @@
   }
 
   async function applyHosts() {
-    const ok = await confirmDialog(
-      "写入 Hosts",
-      "会把域名指向 127.0.0.1，需要管理员权限（会弹 UAC）。" +
-      "退出前请记得「移除 Hosts」。"
-    );
-    if (!ok) return;
+    if (!(await confirmDialog("写入 Hosts", "会把域名指向 127.0.0.1，需要管理员权限（会弹 UAC）。"))) return;
     await guard(async () => {
       HOST.view = await api("host_apply_hosts", { approved: true });
       renderHost();
@@ -330,8 +290,7 @@
   }
 
   async function clearHosts() {
-    const ok = await confirmDialog("移除 Hosts", "只删除本程序写入的那一段，其它行保留。");
-    if (!ok) return;
+    if (!(await confirmDialog("移除 Hosts", "只删除本程序写入的那一段。"))) return;
     await guard(async () => {
       HOST.view = await api("host_clear_hosts", { approved: true });
       renderHost();
@@ -340,8 +299,7 @@
   }
 
   async function restoreHosts() {
-    const ok = await confirmDialog("恢复原 hosts", "用写入前的备份覆盖当前 hosts。");
-    if (!ok) return;
+    if (!(await confirmDialog("恢复原 hosts", "用写入前的备份覆盖当前 hosts。"))) return;
     await guard(async () => {
       HOST.view = await api("host_restore_hosts", { approved: true });
       renderHost();
@@ -349,16 +307,16 @@
     });
   }
 
-  /* ---------------- 开关 ---------------- */
+  /* ---------------- 开关 / 模式 / 重启 ---------------- */
   async function toggleEnabled(want) {
     const mode = currentMode();
     const ok = await confirmDialog(
-      want ? "启动服务" : "停止服务",
+      want ? "启动内核" : "停止内核",
       want
         ? (mode === "host"
-            ? "会启动内核进程并监听本机 <b>80/443</b>。若当前不是管理员，会弹 UAC 请求提权。"
-            : "会启动内核进程并在本机提供 <b>SOCKS5</b>（默认 127.0.0.1:7899）。")
-        : "会<b>结束内核进程</b>；Hosts 不会被自动移除。"
+            ? "会启动内核并监听本机 <b>80/443</b>；非管理员时会弹 UAC。"
+            : "会启动内核并在本机提供 <b>SOCKS5</b>。")
+        : "会<b>结束内核进程</b>；Hosts 不会自动移除。"
     );
     if (!ok) {
       $("toggleEnabled").checked = !want;
@@ -372,29 +330,63 @@
     });
   }
 
-  /* ---------------- 规则页 ---------------- */
+  async function switchMode(next) {
+    await guard(async () => {
+      let r = await api("set_mode", { mode: next, confirmStop: false });
+      if (r.needs_confirm) {
+        const label = r.running_mode === "host" ? "Host 模式" : "SOCKS 模式";
+        const ok = await confirmDialog(
+          "切换模式",
+          "当前 <b>" + label + "</b> 的内核仍在运行。<br/>" +
+          "切换前需要先关闭它，关闭后该模式的连接会立即中断。"
+        );
+        if (!ok) return;
+        r = await api("set_mode", { mode: next, confirmStop: true });
+      }
+      S.snap = r.snapshot;
+      renderAll();
+      if (next === "host") await loadHost();
+      toast(next === "host" ? "已切到 Host 模式" : "已切到 SOCKS 模式");
+    });
+  }
+
+  async function restartService() {
+    if (!(await confirmDialog("重启内核", "先停止再启动当前模式的内核，已建立的连接会断开。"))) return;
+    await guard(async () => {
+      HOST.view = await api("restart_service", { approved: true });
+      S.snap = await api("bootstrap");
+      renderAll();
+      renderHost();
+      toast("内核已重启");
+    });
+  }
+
+  /* ---------------- 规则 ---------------- */
   function renderRules() {
     if (!S.snap) return;
     const rules = (S.snap.project && S.snap.project.rules) || [];
-    const body = $("rulesBody");
-    body.innerHTML = rules
-      .map((r) => (
-        "<tr>" +
-        '<td><input type="checkbox" data-rule="' + esc(r.id) + '"' + (r.enabled ? " checked" : "") + " /></td>" +
-        "<td>" + esc(r.name || r.id) + "</td>" +
-        "<td><code>" + esc((r.match && r.match.domain || []).join("<br>")) + "</code></td>" +
-        "<td>" + esc((r.action && r.action.type) || r.action) + "</td>" +
-        '<td>' +
-        '<button class="btn tiny ghost" data-edit="' + esc(r.id) + '">编辑</button> ' +
-        '<button class="btn tiny ghost danger" data-del="' + esc(r.id) + '">删</button>' +
-        "</td></tr>"
-      ))
+    $("rulesBody").innerHTML = rules
+      .map((r) => {
+        const domains = ((r.match && r.match.domain) || []).join(", ");
+        const act = (r.action && r.action.type) || r.action;
+        const target = r.action && r.action.outbound ? " → " + r.action.outbound : "";
+        return (
+          "<tr>" +
+          '<td><input type="checkbox" data-rule="' + esc(r.id) + '"' +
+          (r.enabled ? " checked" : "") + " /></td>" +
+          "<td>" + esc(r.name || r.id) + "</td>" +
+          '<td><code class="mono">' + esc(domains) + "</code></td>" +
+          "<td>" + esc(act) + esc(target) + "</td>" +
+          "<td>" +
+          '<button class="btn tiny ghost" data-edit="' + esc(r.id) + '">编辑</button> ' +
+          '<button class="btn tiny ghost danger" data-del="' + esc(r.id) + '">删</button>' +
+          "</td></tr>"
+        );
+      })
       .join("");
     $("rulesEmpty").hidden = rules.length > 0;
   }
 
-
-  /* ---------------- 规则增删改 ---------------- */
   function openRule(rule) {
     RULE.editing = rule ? rule.id : null;
     $("ruleTitle").textContent = rule ? "编辑规则" : "新建规则";
@@ -403,8 +395,13 @@
     const act = rule && rule.action ? rule.action : { type: "proxy" };
     $("fAction").value = act.type || "proxy";
     $("fGroup").value = act.outbound || "";
-    $("fGroupRow").hidden = $("fAction").value !== "proxy";
-    $("ruleModal").hidden = false;
+    syncGroupField();
+    $("ruleEditor").hidden = false;
+    $("ruleEditor").scrollIntoView({ block: "nearest" });
+  }
+
+  function syncGroupField() {
+    $("fGroupField").hidden = $("fAction").value !== "proxy";
   }
 
   async function applyRuleForm() {
@@ -413,20 +410,18 @@
       toast("至少填一个域名", "warn");
       return;
     }
-    const action = $("fAction").value;
+    const act = $("fAction").value;
     const outbound = $("fGroup").value.trim();
-    if (action === "proxy" && !outbound) {
+    if (act === "proxy" && !outbound) {
       toast("代理动作需要填策略组名", "warn");
       return;
     }
-    // 后端 Action 是内部标签枚举：{ type: "proxy", outbound } / { type: "direct" } / { type: "reject" }
-    const actionValue =
-      action === "proxy" ? { type: "proxy", outbound } : { type: action };
+    const action = act === "proxy" ? { type: "proxy", outbound } : { type: act };
     const rule = {
       id: RULE.editing || ("rule-" + Date.now()),
       name: $("fName").value.trim() || domains[0],
       enabled: true,
-      action: actionValue,
+      action,
       match: { domain: domains },
     };
     const rules = ((S.snap.project && S.snap.project.rules) || []).slice();
@@ -435,7 +430,7 @@
     else rules.push(rule);
     const project = Object.assign({}, S.snap.project, { rules });
     S.snap = await api("save_project", { project, approved: true });
-    $("ruleModal").hidden = true;
+    $("ruleEditor").hidden = true;
     renderRules();
     renderAll();
     toast("规则已保存");
@@ -462,8 +457,7 @@
 
   /* ---------------- 设置 ---------------- */
   async function saveSettings() {
-    const ok = await confirmDialog("保存设置", "写入 <code>settings.json</code>。");
-    if (!ok) return;
+    if (!(await confirmDialog("保存设置", "写入 <code>settings.json</code>。"))) return;
     await guard(async () => {
       const s = Object.assign({}, S.snap.settings, {
         start_minimized: $("setStartMin").checked,
@@ -493,6 +487,12 @@
     },
   };
 
+  async function loadPresets() {
+    if (PRESETS || !hasBackend()) return PRESETS || { uu_domains: ["+.nrd.nie.163.com"] };
+    PRESETS = await api("get_presets");
+    return PRESETS;
+  }
+
   /* ---------------- 绑定 ---------------- */
   function bind() {
     document.querySelectorAll(".nav-item").forEach((n) => {
@@ -502,35 +502,26 @@
     $("modeSwitch").addEventListener("click", (e) => {
       const btn = e.target.closest(".mode-btn");
       if (!btn || btn.dataset.mode === currentMode()) return;
-      const next = btn.dataset.mode;
-      guard(async () => {
-        // 第一次尝试：如果旧模式还在跑，后端会要求确认
-        let r = await api("set_mode", { mode: next, confirmStop: false });
-        if (r.needs_confirm) {
-          const label = r.running_mode === "host" ? "Host 模式" : "SOCKS 模式";
-          const ok = await confirmDialog(
-            "切换模式",
-            "当前 <b>" + label + "</b> 的内核仍在运行。<br/>" +
-            "切换前需要先关闭它，关闭后该模式的连接会立即中断。"
-          );
-          if (!ok) return;
-          r = await api("set_mode", { mode: next, confirmStop: true });
-        }
-        S.snap = r.snapshot;
-        renderAll();
-        if (next === "host") await loadHost();
-        toast(next === "host" ? "已切到 Host 模式" : "已切到 SOCKS 模式");
-      });
+      switchMode(btn.dataset.mode);
     });
 
-    $("btnRestart").addEventListener("click", () => guard(async () => {
-      const ok = await confirmDialog("重启内核", "先停止再重新启动当前模式的内核，已建立的连接会断开。");
-      if (!ok) return;
-      HOST.view = await api("restart_service", { approved: true });
-      S.snap = await api("bootstrap");
-      renderAll();
-      renderHost();
-      toast("内核已重启");
+    $("toggleEnabled").addEventListener("change", (ev) => {
+      toggleEnabled(ev.target.checked);
+    });
+
+    $("btnRestart").addEventListener("click", () => restartService());
+
+    $("btnQuickStart").addEventListener("click", () => guard(async () => {
+      if (currentMode() === "socks") {
+        const text = (S.snap.preview || "").trim();
+        if (!text) { toast("还没有可复制的内容", "warn"); return; }
+        try {
+          await navigator.clipboard.writeText(text);
+          toast("已复制，粘贴进 Clash Verge 扩展脚本即可", "", 4200);
+        } catch { toast("复制失败", "warn"); }
+      } else {
+        toast("请先打开开关，再点「写入 Hosts」", "", 3600);
+      }
     }));
 
     $("btnCopyScript").addEventListener("click", () => guard(async () => {
@@ -538,34 +529,14 @@
       if (!text) { toast("还没有可复制的内容", "warn"); return; }
       try {
         await navigator.clipboard.writeText(text);
-        toast("已复制，粘贴进 Clash Verge 扩展脚本即可", "", 4000);
+        toast("已复制", "", 3000);
       } catch { toast("复制失败", "warn"); }
     }));
 
     $("btnExportScript").addEventListener("click", () => guard(async () => {
-      const ok = await confirmDialog("导出脚本", "会写入输出目录，并生成备份与清单。");
-      if (!ok) return;
+      if (!(await confirmDialog("导出脚本", "会写入输出目录，并生成备份与清单。"))) return;
       await api("regenerate", { approved: true });
       toast("已导出");
-    }));
-
-    $("toggleEnabled").addEventListener("change", (ev) => {
-      toggleEnabled(ev.target.checked);
-    });
-
-    $("btnQuickStart").addEventListener("click", () => guard(async () => {
-      if (currentMode() === "clash") {
-        const text = (S.snap.preview || "").trim();
-        if (!text) { toast("还没有可复制的内容", "warn"); return; }
-        try {
-          await navigator.clipboard.writeText(text);
-          toast("已复制脚本，粘贴进 Clash Verge 扩展脚本即可", "", 4200);
-        } catch {
-          toast("复制失败，请到「规则」页手动查看", "warn");
-        }
-      } else {
-        toast("请先打开开关，再点「写入 Hosts」", "", 3600);
-      }
     }));
 
     $("btnHostSave").addEventListener("click", () => saveHost());
@@ -575,27 +546,42 @@
     ["hostDomains", "hostPort", "hostMode", "hostParts", "hostSocksPort", "hostDns", "hostLinkClash"]
       .forEach((id) => $(id).addEventListener("change", () => (HOST.dirty = true)));
 
-    $("btnSaveSettings").addEventListener("click", () => saveSettings());
-    $("setTheme").addEventListener("change", () => Theme.set($("setTheme").value));
-    $("btnOpenData").addEventListener("click", () => guard(() => api("open_output_dir")));
+    $("btnAddRule").addEventListener("click", () => openRule(null));
+    $("ruleCancel").addEventListener("click", () => ($("ruleEditor").hidden = true));
+    $("ruleOk").addEventListener("click", () => guard(applyRuleForm));
+    $("fAction").addEventListener("change", syncGroupField);
 
-    $("btnClearLogs").addEventListener("click", () => ($("logBox").innerHTML = ""));
-    $("btnOpenLogFile").addEventListener("click", () => guard(() => api("open_output_dir")));
+    $("rulesBody").addEventListener("click", (e) => {
+      const edit = e.target.closest("[data-edit]");
+      if (edit) {
+        const r = ((S.snap.project && S.snap.project.rules) || [])
+          .find((x) => x.id === edit.dataset.edit);
+        if (r) openRule(r);
+        return;
+      }
+      const del = e.target.closest("[data-del]");
+      if (del) guard(() => deleteRule(del.dataset.del));
+    });
+    $("rulesBody").addEventListener("change", (e) => {
+      const cb = e.target.closest("[data-rule]");
+      if (cb) guard(() => toggleRule(cb.dataset.rule, cb.checked));
+    });
 
     $("btnPresetUU").addEventListener("click", () => guard(async () => {
       const p = await loadPresets();
-      const rules = (S.snap.project && S.snap.project.rules) || [];
-      const rule = {
+      const rules = ((S.snap.project && S.snap.project.rules) || []).slice();
+      rules.push({
         id: "uu-" + Date.now(),
         name: "UU 远程",
         enabled: true,
-        action: "proxy",
+        action: { type: "proxy", outbound: "Proxy" },
         match: { domain: p.uu_domains || ["+.nrd.nie.163.com"] },
-      };
-      const project = Object.assign({}, S.snap.project, { rules: rules.concat([rule]) });
+      });
+      const project = Object.assign({}, S.snap.project, { rules });
       S.snap = await api("save_project", { project, approved: true });
       renderRules();
-      toast("已加入 UU 规则");
+      renderAll();
+      toast("已加入 UU 规则（记得改策略组名）");
     }));
 
     $("btnJson").addEventListener("click", () => {
@@ -612,29 +598,12 @@
       toast("已应用");
     }));
 
-    $("btnAddRule").addEventListener("click", () => openRule(null));
-    $("ruleCancel").addEventListener("click", () => ($("ruleModal").hidden = true));
-    $("ruleOk").addEventListener("click", () => guard(applyRuleForm));
-    $("rulesBody").addEventListener("click", (e) => {
-      const edit = e.target.closest("[data-edit]");
-      if (edit) {
-        const r = ((S.snap.project && S.snap.project.rules) || [])
-          .find((x) => x.id === edit.dataset.edit);
-        if (r) openRule(r);
-        return;
-      }
-      const del = e.target.closest("[data-del]");
-      if (del) guard(() => deleteRule(del.dataset.del));
-    });
-    $("rulesBody").addEventListener("change", (e) => {
-      const cb = e.target.closest("[data-rule]");
-      if (cb) guard(() => toggleRule(cb.dataset.rule, cb.checked));
-    });
-    $("fAction").addEventListener("change", () => {
-      $("fGroupRow").hidden = $("fAction").value !== "proxy";
-    });
+    $("btnSaveSettings").addEventListener("click", () => saveSettings());
+    $("setTheme").addEventListener("change", () => Theme.set($("setTheme").value));
+    $("btnOpenData").addEventListener("click", () => guard(() => api("open_output_dir")));
+    $("btnOpenLogFile").addEventListener("click", () => guard(() => api("open_data_dir")));
+    $("btnClearLogs").addEventListener("click", () => ($("logBox").innerHTML = ""));
 
-    // 事件广播
     if (hasBackend()) {
       window.__TAURI__.event.listen("state-changed", async () => {
         S.snap = await api("bootstrap");
@@ -644,16 +613,10 @@
     }
   }
 
-  async function loadPresets() {
-    if (PRESETS || !hasBackend()) return PRESETS || { uu_domains: ["+.nrd.nie.163.com"] };
-    PRESETS = await api("get_presets");
-    return PRESETS;
-  }
-
   /* ---------------- 启动 ---------------- */
   async function boot() {
     if (!hasBackend()) {
-      $("appMeta").textContent = "预览模式";
+      document.body.dataset.mode = "socks";
       return;
     }
     bind();
