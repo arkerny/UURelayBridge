@@ -128,15 +128,39 @@ fn run_elevated(verb: &str, data_dir: &Path) -> Result<(), String> {
         "do shell script \"{}\" with administrator privileges",
         cmd.replace('\\', "\\\\").replace('"', "\\\"")
     );
-    let status = std::process::Command::new("osascript")
+    let mut child = std::process::Command::new("osascript")
         .arg("-e")
         .arg(script)
-        .status()
-        .map_err(|e| format!("调用 osascript 失败：{e}"))?;
-    if !status.success() {
-        return Err("提权被取消或失败".to_string());
+        .spawn()
+        .map_err(|e| {
+            format!(
+                "调用 osascript 失败：{e}。macOS 首次使用需在「系统设置 → 隐私与安全性 → 自动化」中允许本程序控制 System Events。"
+            )
+        })?;
+    // 一次性操作，最多等 120 秒（用户要输密码）
+    let mut waited = 0u32;
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => {
+                if !st.success() {
+                    return Err(
+                        "提权被取消或失败（若反复失败，请检查系统设置 → 隐私与安全性 → 自动化中的权限）"
+                            .to_string(),
+                    );
+                }
+                return Ok(());
+            }
+            Ok(None) => {
+                if waited >= 240 {
+                    let _ = child.kill();
+                    return Err("提权超时（120 秒内未完成）".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(500));
+                waited += 1;
+            }
+            Err(e) => return Err(format!("等待提权进程失败：{e}")),
+        }
     }
-    Ok(())
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
@@ -222,14 +246,16 @@ fn run_self_elevated(data_dir: &Path) -> Result<(), String> {
         "do shell script \"{}\" with administrator privileges",
         cmd.replace('\\', "\\\\").replace('"', "\\\"")
     );
-    let status = std::process::Command::new("osascript")
+    // 子进程是长期运行的 GUI，不能 .status() 阻塞等待，否则当前实例会卡死。
+    std::process::Command::new("osascript")
         .arg("-e")
         .arg(script)
-        .status()
-        .map_err(|e| format!("调用 osascript 失败：{e}"))?;
-    if !status.success() {
-        return Err("提权被取消或失败".to_string());
-    }
+        .spawn()
+        .map_err(|e| {
+            format!(
+                "调用 osascript 失败：{e}。macOS 首次使用需在「系统设置 → 隐私与安全性 → 自动化」中允许本程序控制 System Events。"
+            )
+        })?;
     Ok(())
 }
 
